@@ -43,8 +43,13 @@ class GWSPDataset:
         example "mrsos_day_EC-Earth3-Veg*.nc"
     parameter : string, optional
         Name of the parameter in the netCDF-file. Default is "mrsos".
-    cellsize: float, optional
+    cellsize : float, optional
         Size of cell files in degrees. Default is 5.0.
+    only_land : bool, optional (default: False)
+        Use the land mask to reduce the grid to land grid points only.
+    bbox : list/tuple or None
+        Bounding box parameters in the form [min_lon, min_lat, max_lon,
+        max_lat]
     """
 
     def __init__(
@@ -52,9 +57,12 @@ class GWSPDataset:
         filename_pattern,
         parameter="mrsos",
         cellsize=5.0,
+        only_land=False,
+        bbox=None,
     ):
         self.parameter = parameter
         self.cellsize = cellsize
+        self.only_land = only_land
 
         # open dataset with xarray, using dask backend for parallel access
         ds = xr.open_mfdataset(
@@ -62,9 +70,30 @@ class GWSPDataset:
         )
         self.dataset = ds.stack(dimensions={"latlon": ("lat", "lon")})
 
-        self.grid = BasicGrid(self.lon, self.lat).to_cell_grid(
-            cellsize=self.cellsize
-        )
+        # setup grid
+        global_grid = BasicGrid(self.lon, self.lat)
+
+        # land mask
+        self.landmask = ~np.isnan(self.dataset[parameter].isel(time=0)).values
+        self.land_gpis = global_grid.get_grid_points()[0][self.landmask]
+        if self.only_land:
+            grid = global_grid.subgrid_from_gpis(self.land_gpis)
+        else:
+            grid = global_grid
+
+        # bounding box
+        if bbox is not None:
+            # given is: bbox = [lonmin, latmin, lonmax, latmax]
+            self.lonmin, self.latmin, self.lonmax, self.latmax = (*bbox,)
+            self.bbox_gpis = grid.get_bbox_grid_points(
+                lonmin=self.lonmin,
+                latmin=self.latmin,
+                lonmax=self.lonmax,
+                latmax=self.latmax
+            )
+            grid = grid.subgrid_from_gpis(self.bbox_gpis)
+
+        self.grid = grid.to_cell_grid(cellsize=self.cellsize)
 
         # create metadata dictionary from dataset attributes
         self.metadata = copy(self.dataset.attrs)

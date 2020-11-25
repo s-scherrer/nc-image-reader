@@ -92,7 +92,6 @@ def parse_args(args):  # pragma: no cover
         ),
     )
 
-    # TODO
     parser.add_argument(
         "--land_points",
         type=str2bool,
@@ -103,7 +102,6 @@ def parse_args(args):  # pragma: no cover
         ),
     )
 
-    # TODO
     parser.add_argument(
         "--bbox",
         type=float,
@@ -148,6 +146,8 @@ def img2ts(
     startdate,
     enddate,
     imgbuffer=365,
+    only_land=False,
+    bbox=None,
 ):
     """
     Convert the images to time series.
@@ -162,13 +162,26 @@ def img2ts(
         Start date of processing
     enddate : np.datetime64
         End date of processing
-    imgbuffer : int, optional
-        Number of images to read at once. Defaults to 365.
+    imgbuffer : int, optional (default: 365)
+        Number of images to read at once.
+    only_land : bool, optional (default: False)
+        Use the land mask to reduce the grid to land grid points only.
+    bbox : list/tuple
+        Bounding box parameters in the form [min_lon, min_lat, max_lon,
+        max_lat]
+
+    Returns
+    -------
+    reshuffler : Img2Ts object
     """
-    input_dataset = GWSPDataset(Path(dataset_root) / "*.nc")
+    input_dataset = GWSPDataset(
+        Path(dataset_root) / "*.nc",
+        only_land=only_land,
+        bbox=bbox,
+    )
     Path(timeseries_root).mkdir(parents=True, exist_ok=True)
 
-    Img2Ts(
+    reshuffler = Img2Ts(
         input_dataset=input_dataset,
         outputpath=timeseries_root,
         startdate=startdate,
@@ -176,7 +189,11 @@ def img2ts(
         ts_attributes=input_dataset.metadata,
         zlib=True,
         imgbuffer=imgbuffer,
-    ).calc()
+    )
+    reshuffler.calc()
+
+    # returned, mainly for testing/debugging
+    return reshuffler
 
 
 def main(args):
@@ -195,6 +212,8 @@ def main(args):
         args.start,
         args.end,
         imgbuffer=args.imgbuffer,
+        only_land=args.land_points,
+        bbox=args.bbox,
     )
 
 
