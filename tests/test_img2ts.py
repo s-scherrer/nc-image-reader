@@ -30,6 +30,8 @@ def test_img2ts():
             dataset_root, ts_root, start, end, only_land=only_land
         )
 
+        assert len(reshuffler.target_grid.arrcell) > 1
+
         # make sure the output exists
         assert ts_root.exists()
         assert (ts_root / "grid.nc").exists()
@@ -38,8 +40,8 @@ def test_img2ts():
         dataset[only_land] = GWSPTs(str(ts_root))
 
     # get total grid size from test data
-    ds = xr.open_mfdataset(str(dataset_root / "*.nc"))
-    num_gpis = ds.mrsos.isel(time=0).size
+    ds = reshuffler.imgin
+    num_gpis = ds.dataset.mrsos.isel(time=0).size
 
     # evaluation for land gpis
     land_gpis = dataset[True].grid.activegpis
@@ -48,18 +50,18 @@ def test_img2ts():
     assert len(land_gpis) < num_gpis
     assert len(non_land_gpis) < num_gpis
 
-    for land in [True, False]:
-        gpi = np.random.choice(land_gpis)
-        gpi = 54169
-        import pdb; pdb.set_trace()
-        ts = dataset[land].read(gpi)
+    for gpi in [54169, np.random.choice(land_gpis)]:
+        ts = {}
+        for land in [True, False]:
+            ts[land] = dataset[land].read(gpi)
 
-        # values are in kg/m^2, and are the upper 10cm water content
-        # therefore dividing by 1000 * 0.1 should give volumetric water content
-        theta = ts / (1000 * 0.1)
-        assert not np.any(np.isnan(theta))
-        assert np.all(theta < 1)
-        assert np.all(theta > 0)
+            # values are in kg/m^2, and are the upper 10cm water content
+            # therefore dividing by 1000 * 0.1 should give volumetric water content
+            theta = ts[land] / (1000 * 0.1)
+            assert not np.any(np.isnan(theta))
+            assert np.all(theta < 1)
+            assert np.all(theta > 0)
+        assert np.all(ts[True] == ts[False])
 
     # evaluation for gpis not on land
     gpi = np.random.choice(non_land_gpis)

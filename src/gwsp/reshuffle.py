@@ -189,6 +189,9 @@ def img2ts(
         ts_attributes=input_dataset.metadata,
         zlib=True,
         imgbuffer=imgbuffer,
+        # this is necessary currently due to bug in repurpose
+        cellsize_lat=input_dataset.cellsize,
+        cellsize_lon=input_dataset.cellsize,
     )
     reshuffler.calc()
 
@@ -196,7 +199,7 @@ def img2ts(
     return reshuffler
 
 
-def main(args):
+def main(args):  # pragma: no cover
     """
     Main routine used for command line interface.
 

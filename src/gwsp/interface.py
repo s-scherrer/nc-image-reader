@@ -69,6 +69,9 @@ class GWSPDataset:
             str(filename_pattern), parallel=True, concat_dim="time"
         )
         self.dataset = ds.stack(dimensions={"latlon": ("lat", "lon")})
+        # lons are between 0 and 360, they have to be remapped to (-180, 180)
+        self._lons = np.array(self.dataset.lon.values)
+        self._lons[self._lons > 180] -= 360
 
         # setup grid
         global_grid = BasicGrid(self.lon, self.lat)
@@ -89,7 +92,7 @@ class GWSPDataset:
                 lonmin=self.lonmin,
                 latmin=self.latmin,
                 lonmax=self.lonmax,
-                latmax=self.latmax
+                latmax=self.latmax,
             )
             grid = grid.subgrid_from_gpis(self.bbox_gpis)
 
@@ -110,7 +113,7 @@ class GWSPDataset:
 
     @property
     def lon(self):
-        return self.dataset.lon.values
+        return self._lons
 
     @property
     def lat(self):
@@ -140,11 +143,9 @@ class GWSPDataset:
             data = {
                 self.parameter: self.dataset[self.parameter]
                 .sel(time=timestamp)
-                .values
+                .values[self.grid.activegpis]
             }
-            return Image(
-                self.lon, self.lat, data, self.metadata, timestamp
-            )
+            return Image(self.lon, self.lat, data, self.metadata, timestamp)
         except KeyError:  # pragma: no cover
             raise KeyError(
                 f"Timestamp {timestamp} is not available in the dataset!"
@@ -176,6 +177,7 @@ class GWSPDataset:
 
 
 class GWSPTs(GriddedNcOrthoMultiTs):
+
     def __init__(self, ts_path, grid_path=None, **kwargs):
         """
         Class for reading GWSP time series after reshuffling.
@@ -190,7 +192,7 @@ class GWSPTs(GriddedNcOrthoMultiTs):
             ts_path.
 
         Optional keyword arguments that are passed to the Gridded Base:
-        ------------------------------------------------------------------------
+        ---------------------------------------------------------------
         parameters : list, optional (default: None)
             Specific variable names to read, if None are selected, all are
             read.
@@ -201,7 +203,7 @@ class GWSPTs(GriddedNcOrthoMultiTs):
         ioclass_kws: dict
 
         Optional keyword arguments to pass to OrthoMultiTs class:
-        ----------------------------------------------------------------
+        ---------------------------------------------------------
         read_bulk : boolean, optional (default:False)
             if set to True the data of all locations is read into memory,
             and subsequent calls to read_ts read from the cache and not from
@@ -211,7 +213,7 @@ class GWSPTs(GriddedNcOrthoMultiTs):
             request useable for bulk reading because currently the netCDF
             num2date routine is very slow for big datasets
         """
-        if grid_path is None:
+        if grid_path is None:  # pragma: no branch
             grid_path = os.path.join(ts_path, "grid.nc")
         grid = load_grid(grid_path)
         super().__init__(ts_path, grid, **kwargs)

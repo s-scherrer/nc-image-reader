@@ -68,3 +68,16 @@ def test_bbox(filename_pattern):
     assert not np.any(ds.grid.arrlat < min_lat)
     assert not np.any(ds.grid.arrlon > max_lon)
     assert not np.any(ds.grid.arrlat > max_lat)
+
+
+def test_grid_lons(filename_pattern):
+    """
+    Tests if the grid of the dataset has only longitudes between -180 and 180
+    """
+
+    ds = GWSPDataset(filename_pattern)
+
+    lons = ds.grid.arrlon
+    assert np.all(lons <= 180)
+    assert np.all(lons > -180)
+    assert np.any(lons < 0)
