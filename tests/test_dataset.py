@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 import pytest
 
-from gwsp.interface import GWSPDataset
+from gswp.interface import GSWPDataset
 
 
 @pytest.fixture
@@ -18,7 +18,7 @@ def test_datetime_compatibility(filename_pattern):
     tstamps_for_daterange works.
     """
 
-    ds = GWSPDataset(filename_pattern)
+    ds = GSWPDataset(filename_pattern)
     date_array = ds.tstamps_for_daterange("1970-01-01", "1970-01-31")
     time = date_array[0]
 
@@ -33,7 +33,7 @@ def test_only_land(filename_pattern):
     """
     Tests if the only_land feature works as expected.
     """
-    ds = GWSPDataset(filename_pattern, only_land=True)
+    ds = GSWPDataset(filename_pattern, only_land=True)
     num_gpis = ds.dataset.mrsos.isel(time=0).size
 
     assert len(ds.grid.activegpis) < num_gpis
@@ -56,7 +56,7 @@ def test_bbox(filename_pattern):
     max_lon = 50
     max_lat = 50
 
-    ds = GWSPDataset(
+    ds = GSWPDataset(
         filename_pattern, bbox=[min_lon, min_lat, max_lon, max_lat]
     )
     num_gpis = ds.dataset.mrsos.isel(time=0).size
@@ -75,7 +75,7 @@ def test_grid_lons(filename_pattern):
     Tests if the grid of the dataset has only longitudes between -180 and 180
     """
 
-    ds = GWSPDataset(filename_pattern)
+    ds = GSWPDataset(filename_pattern)
 
     lons = ds.grid.arrlon
     assert np.all(lons <= 180)

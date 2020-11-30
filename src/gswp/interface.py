@@ -1,6 +1,6 @@
 ﻿# The MIT License (MIT)
 #
-# Copyright (c) 2018, TU Wien
+# Copyright (c) 2020, TU Wien
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -31,9 +31,9 @@ from pygeogrids.netcdf import load_grid
 from pynetcf.time_series import GriddedNcOrthoMultiTs
 
 
-class GWSPDataset:
+class GSWPDataset:
     """
-    Class that reads GWSP data from multiple nc files and provides
+    Class that reads GSWP data from multiple nc files and provides
     `daily_images` iterator for Img2Ts, as well as a `CellGrid` instance.
 
     Parameters
@@ -176,11 +176,11 @@ class GWSPDataset:
         )
 
 
-class GWSPTs(GriddedNcOrthoMultiTs):
+class GSWPTs(GriddedNcOrthoMultiTs):
 
     def __init__(self, ts_path, grid_path=None, **kwargs):
         """
-        Class for reading GWSP time series after reshuffling.
+        Class for reading GSWP time series after reshuffling.
 
         Parameters
         ----------

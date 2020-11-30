@@ -1,10 +1,9 @@
 import numpy as np
 from pathlib import Path
 import shutil
-import xarray as xr
 
-from gwsp.interface import GWSPTs
-from gwsp.reshuffle import img2ts
+from gswp.interface import GSWPTs
+from gswp.reshuffle import img2ts
 
 
 def test_img2ts():
@@ -37,7 +36,7 @@ def test_img2ts():
         assert (ts_root / "grid.nc").exists()
 
         # try reading time series
-        dataset[only_land] = GWSPTs(str(ts_root))
+        dataset[only_land] = GSWPTs(str(ts_root))
 
     # get total grid size from test data
     ds = reshuffler.imgin
@@ -56,7 +55,8 @@ def test_img2ts():
             ts[land] = dataset[land].read(gpi)
 
             # values are in kg/m^2, and are the upper 10cm water content
-            # therefore dividing by 1000 * 0.1 should give volumetric water content
+            # therefore dividing by 1000 * 0.1 should give volumetric water
+            # content
             theta = ts[land] / (1000 * 0.1)
             assert not np.any(np.isnan(theta))
             assert np.all(theta < 1)

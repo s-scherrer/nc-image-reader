@@ -1,6 +1,6 @@
 # The MIT License (MIT)
 #
-# Copyright (c) 2018, TU Wien
+# Copyright (c) 2020, TU Wien
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -31,7 +31,7 @@ import numpy as np
 import sys
 
 from repurpose.img2ts import Img2Ts
-from gwsp.interface import GWSPDataset
+from gswp.interface import GSWPDataset
 
 
 def str2bool(val):  # pragma: no cover
@@ -174,7 +174,7 @@ def img2ts(
     -------
     reshuffler : Img2Ts object
     """
-    input_dataset = GWSPDataset(
+    input_dataset = GSWPDataset(
         Path(dataset_root) / "*.nc",
         only_land=only_land,
         bbox=bbox,
