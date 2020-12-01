@@ -34,11 +34,11 @@ from repurpose.img2ts import Img2Ts
 from gswp.interface import GSWPDataset
 
 
-def str2bool(val):  # pragma: no cover
+def str2bool(val):
     return val in ["True", "true", "t", "T", "1"]
 
 
-def parse_args(args):  # pragma: no cover
+def parse_args(args):
     """
     Parse command line parameters for recursive download.
 
@@ -78,18 +78,6 @@ def parse_args(args):  # pragma: no cover
         "end",
         type=np.datetime64,
         help=("Enddate. Either in format YYYY-MM-DD or " "YYYY-MM-DDTHH:MM."),
-    )
-
-    # TODO
-    parser.add_argument(
-        "parameters",
-        metavar="parameters",
-        nargs="+",
-        help=(
-            "Parameters to reshuffle into time series format. "
-            "e.g. SoilMoi0_10cm_inst SoilMoi10_40cm_inst for "
-            "Volumetric soil water layers 1 to 2."
-        ),
     )
 
     parser.add_argument(
@@ -199,7 +187,7 @@ def img2ts(
     return reshuffler
 
 
-def main(args):  # pragma: no cover
+def main(args):
     """
     Main routine used for command line interface.
 

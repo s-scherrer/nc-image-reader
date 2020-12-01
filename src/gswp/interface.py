@@ -77,7 +77,7 @@ class GSWPDataset:
         global_grid = BasicGrid(self.lon, self.lat)
 
         # land mask
-        self.landmask = ~np.isnan(self.dataset[parameter].isel(time=0)).values
+        self.landmask = ~np.isnan(self.dataset[parameter].isel(time=0).values)
         self.land_gpis = global_grid.get_grid_points()[0][self.landmask]
         if self.only_land:
             grid = global_grid.subgrid_from_gpis(self.land_gpis)

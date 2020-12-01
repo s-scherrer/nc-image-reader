@@ -1,20 +1,28 @@
 import numpy as np
 from pathlib import Path
+import pytest
 import shutil
 
 from gswp.interface import GSWPTs
-from gswp.reshuffle import img2ts
+from gswp.reshuffle import img2ts, main, parse_args
 
 
-def test_img2ts():
-
+@pytest.fixture
+def timeseries_root():
     here = Path(__file__).resolve().parent
+    return here / "output"
+
+
+@pytest.fixture
+def dataset_root():
+    here = Path(__file__).resolve().parent
+    return here / "test_data"
+
+
+def test_img2ts(timeseries_root, dataset_root):
 
     start = np.datetime64("1970-01-01")
     end = np.datetime64("1970-01-31")
-
-    dataset_root = here / "test_data"
-    timeseries_root = here / "output"
 
     # remove old test output (in case a test failed)
     if timeseries_root.exists():
@@ -34,6 +42,7 @@ def test_img2ts():
         # make sure the output exists
         assert ts_root.exists()
         assert (ts_root / "grid.nc").exists()
+        assert (ts_root / "1001.nc").exists()
 
         # try reading time series
         dataset[only_land] = GSWPTs(str(ts_root))
@@ -67,6 +76,44 @@ def test_img2ts():
     gpi = np.random.choice(non_land_gpis)
     ts = dataset[False].read(gpi)
     assert np.all(np.isnan(ts))
+
+    # remove test output
+    shutil.rmtree(timeseries_root)
+
+
+@pytest.fixture
+def commandline_args(dataset_root, timeseries_root):
+    return [
+        "--land_points", "t",
+        "--bbox", "-20", "-20", "20", "20",
+        "--imgbuffer", "10",
+        str(dataset_root),
+        str(timeseries_root),
+        "1970-01-01",
+        "1970-01-10",
+    ]
+
+
+def test_parse_args(commandline_args, dataset_root, timeseries_root):
+    args = parse_args(commandline_args)
+
+    assert np.all(args.bbox == [-20, -20, 20, 20])
+    assert args.land_points == True
+    assert args.imgbuffer == 10
+    assert args.start == np.datetime64("1970-01-01")
+    assert args.end == np.datetime64("1970-01-10")
+    assert args.dataset_root == str(dataset_root)
+    assert args.timeseries_root == str(timeseries_root)
+
+
+def test_reshuffle(timeseries_root, commandline_args):
+    # tests if running from the commandline works
+
+    main(commandline_args)
+
+    assert timeseries_root.exists()
+    assert (timeseries_root / "grid.nc").exists()
+    assert (timeseries_root / "1280.nc").exists()
 
     # remove test output
     shutil.rmtree(timeseries_root)
