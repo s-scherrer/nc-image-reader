@@ -2,8 +2,24 @@
 gswp
 ====
 
+.. image:: https://travis-ci.org/TUW-GEO/gswp.svg?branch=master
+    :target: https://travis-ci.org/TUW-GEO/gswp
 
-Add a short description here!
+.. image:: https://coveralls.io/repos/github/TUW-GEO/gswp/badge.svg?branch=master
+   :target: https://coveralls.io/github/TUW-GEO/gswp?branch=master
+
+.. image:: https://badge.fury.io/py/gswp.svg
+    :target: http://badge.fury.io/py/gswp
+
+.. image:: https://readthedocs.org/projects/gswp/badge/?version=latest
+   :target: http://gswp.readthedocs.org/
+
+
+Readers and converters for data from the Global Soil Wetness Program.
+
+Works great in combination with `pytesmo <https://github.com/TUW-GEO/pytesmo>`_.
+
+Currently still work in progress.
 
 Citation
 ========
