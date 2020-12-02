@@ -21,8 +21,8 @@
 # SOFTWARE.
 
 from copy import copy
-import os
 import numpy as np
+import os
 import xarray as xr
 
 from pygeobase.object_base import Image
@@ -97,6 +97,9 @@ class GSWPDataset:
             grid = grid.subgrid_from_gpis(self.bbox_gpis)
 
         self.grid = grid.to_cell_grid(cellsize=self.cellsize)
+
+        print(f"Number of active gpis: {len(self.grid.activegpis)}")
+        print(f"Number of grid cells: {len(self.grid.get_cells())}")
 
         # create metadata dictionary from dataset attributes
         self.metadata = copy(self.dataset.attrs)
@@ -177,7 +180,6 @@ class GSWPDataset:
 
 
 class GSWPTs(GriddedNcOrthoMultiTs):
-
     def __init__(self, ts_path, grid_path=None, **kwargs):
         """
         Class for reading GSWP time series after reshuffling.

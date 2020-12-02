@@ -128,7 +128,7 @@ def parse_args(args):
     return args
 
 
-def img2ts(
+def _create_reshuffler(
     dataset_root,
     timeseries_root,
     startdate,
@@ -138,7 +138,7 @@ def img2ts(
     bbox=None,
 ):
     """
-    Convert the images to time series.
+    Create a reshuffler for converting images to timeseries.
 
     Parameters
     ----------
@@ -181,6 +181,53 @@ def img2ts(
         cellsize_lat=input_dataset.cellsize,
         cellsize_lon=input_dataset.cellsize,
     )
+    return reshuffler
+
+
+def img2ts(
+    dataset_root,
+    timeseries_root,
+    startdate,
+    enddate,
+    imgbuffer=365,
+    only_land=False,
+    bbox=None,
+):
+    """
+    Convert the images to time series.
+
+    Parameters
+    ----------
+    dataset_root : str or Path
+        Path of the directory containing the data files.
+    timeseries_root : str or Path
+        Path of where to store the timeseries files.
+    startdate : np.datetime64
+        Start date of processing
+    enddate : np.datetime64
+        End date of processing
+    imgbuffer : int, optional (default: 365)
+        Number of images to read at once.
+    only_land : bool, optional (default: False)
+        Use the land mask to reduce the grid to land grid points only.
+    bbox : list/tuple
+        Bounding box parameters in the form [min_lon, min_lat, max_lon,
+        max_lat]
+
+    Returns
+    -------
+    reshuffler : Img2Ts object
+    """
+
+    reshuffler = _create_reshuffler(
+        dataset_root,
+        timeseries_root,
+        startdate,
+        enddate,
+        imgbuffer=imgbuffer,
+        only_land=only_land,
+        bbox=bbox,
+    )
     reshuffler.calc()
 
     # returned, mainly for testing/debugging
@@ -197,7 +244,7 @@ def main(args):
         Command line arguments.
     """
     args = parse_args(args)
-    img2ts(
+    reshuffler = img2ts(
         args.dataset_root,
         args.timeseries_root,
         args.start,

@@ -51,10 +51,10 @@ def test_bbox(filename_pattern):
     Tests the bounding box feature
     """
 
-    min_lon = -50
-    min_lat = -50
-    max_lon = 50
-    max_lat = 50
+    min_lon = -160
+    min_lat = 15
+    max_lon = -150
+    max_lat = 25
 
     ds = GSWPDataset(
         filename_pattern, bbox=[min_lon, min_lat, max_lon, max_lat]
@@ -63,6 +63,7 @@ def test_bbox(filename_pattern):
 
     assert hasattr(ds, "bbox_gpis")
     assert len(ds.grid.activegpis) < num_gpis
+    assert len(np.unique(ds.grid.activearrcell)) == 4
 
     assert not np.any(ds.grid.arrlon < min_lon)
     assert not np.any(ds.grid.arrlat < min_lat)

@@ -4,7 +4,7 @@ import pytest
 import shutil
 
 from gswp.interface import GSWPTs
-from gswp.reshuffle import img2ts, main, parse_args
+from gswp.reshuffle import img2ts, main, parse_args, _create_reshuffler
 
 
 @pytest.fixture
@@ -106,7 +106,7 @@ def test_parse_args(commandline_args, dataset_root, timeseries_root):
     assert args.timeseries_root == str(timeseries_root)
 
 
-def test_reshuffle(timeseries_root, commandline_args):
+def test_main(timeseries_root, commandline_args):
     # tests if running from the commandline works
 
     main(commandline_args)
@@ -117,3 +117,20 @@ def test_reshuffle(timeseries_root, commandline_args):
 
     # remove test output
     shutil.rmtree(timeseries_root)
+
+
+def test_bbox(commandline_args):
+    args = parse_args(commandline_args)
+    reshuffler = _create_reshuffler(
+        args.dataset_root,
+        args.timeseries_root,
+        args.start,
+        args.end,
+        imgbuffer=args.imgbuffer,
+        only_land=args.land_points,
+        bbox=args.bbox,
+    )
+
+    assert len(reshuffler.target_grid.get_cells()) == 36
+    assert reshuffler.imgin.lonmin == -20
+    
