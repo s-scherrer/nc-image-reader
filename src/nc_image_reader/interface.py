@@ -30,23 +30,50 @@ from pygeogrids.grids import BasicGrid
 from pygeogrids.netcdf import load_grid
 from pynetcf.time_series import GriddedNcOrthoMultiTs
 
+import nc_image_reader.loading_funcs as lfuncs
 
-class GSWPDataset:
+# an exercise for the inclined reader
+loading_func_dict = {
+    "_".join(name.split("_")[1:]): getattr(lfuncs, name)
+    for name in filter(lambda s: s.startswith("load_"), dir(lfuncs))
+}
+
+
+class GriddedXrOrthoMultiImage:
     """
-    Class that reads GSWP data from multiple nc files and provides
-    `daily_images` iterator for Img2Ts, as well as a `CellGrid` instance.
+    Image class for orthogonal multidimensional arrays read with xarray.
+
+    This is a wrapper class for xarray Datasets, that implements all methods
+    and attributes required for working with other packages from the TUW-GEO
+    universe.
+
+    To construct the class, you need to pass a loading function that takes a
+    filename and a list of parameters as input and returns a xarray Dataset
+    with coordinate axes "lon", "lat", and "time". Additionally, the dataset
+    must have DataArrays with the specified parameter names.
+    There are also some pre-defined loading functions that can be accessed via
+    a string. Currently available are:
+
+    - "cmip6"
+    - "lis_noah"
+
+    These are defined in ``nc_image_reader.loading_funcs`` and also serve as an
+    example.
 
     Parameters
     ----------
-    filename_pattern : string
-        Pattern matching the dataset for use in `xarray.open_mfdataset()`, for
-        example "mrsos_day_EC-Earth3-Veg*.nc"
-    parameter : string, optional
-        Name of the parameter in the netCDF-file. Default is "mrsos".
+    fname : str
+        Filename of the dataset. Might be a pattern that can be used with
+        ``xarray.open_mfdataset``.
+    parameter : str or list of str
+        Name of the parameter(s) to read.
+    loading_func : callable or str
+        A string or a function, see class description.
     cellsize : float, optional
         Size of cell files in degrees. Default is 5.0.
     only_land : bool, optional (default: False)
-        Use the land mask to reduce the grid to land grid points only.
+        Use the land mask to reduce the grid to land grid points only. Only
+        available if the dataset has a variable "landmask".
     bbox : list/tuple or None
         Bounding box parameters in the form [min_lon, min_lat, max_lon,
         max_lat]
@@ -54,21 +81,35 @@ class GSWPDataset:
 
     def __init__(
         self,
-        filename_pattern,
-        parameter="mrsos",
+        fname,
+        parameters,
+        loading_func,
         cellsize=5.0,
         only_land=False,
         bbox=None,
     ):
-        self.parameter = parameter
+        # input validation
+        if isinstance(parameters, str):
+            parameters = [parameters]
+        self.parameters = parameters
+        if isinstance(loading_func, str):
+            if loading_func not in loading_func_dict:  # pragma: no cover
+                raise ValueError(
+                    f"No loading function with the name '{loading_func}'"
+                    " exists."
+                )
+            loading_func = loading_func_dict[loading_func]
+        self.loading_func = loading_func
         self.cellsize = cellsize
         self.only_land = only_land
 
-        # open dataset with xarray, using dask backend for parallel access
-        ds = xr.open_mfdataset(
-            str(filename_pattern), parallel=True, concat_dim="time"
+        # load dataset
+        self.dataset = loading_func(fname, self.parameters)
+
+        # Img2Ts prefers flattened data
+        self.dataset = self.dataset.stack(
+            dimensions={"latlon": ("lat", "lon")}
         )
-        self.dataset = ds.stack(dimensions={"latlon": ("lat", "lon")})
         # lons are between 0 and 360, they have to be remapped to (-180, 180)
         self._lons = np.array(self.dataset.lon.values)
         self._lons[self._lons > 180] -= 360
@@ -77,9 +118,12 @@ class GSWPDataset:
         global_grid = BasicGrid(self.lon, self.lat)
 
         # land mask
-        self.landmask = ~np.isnan(self.dataset[parameter].isel(time=0).values)
-        self.land_gpis = global_grid.get_grid_points()[0][self.landmask]
         if self.only_land:
+            if "landmask" in self.dataset:
+                self.landmask = self.dataset.landmask.values
+            else:  # pragma: no cover
+                raise ValueError("No landmask available!")
+            self.land_gpis = global_grid.get_grid_points()[0][self.landmask]
             grid = global_grid.subgrid_from_gpis(self.land_gpis)
         else:
             grid = global_grid
@@ -102,16 +146,14 @@ class GSWPDataset:
         print(f"Number of grid cells: {len(self.grid.get_cells())}")
 
         # create metadata dictionary from dataset attributes
+        # this copies the dataset metadata directly and appends metadata of the
+        # single variables with <param_name>_ as prefix to their metadata keys.
         self.metadata = copy(self.dataset.attrs)
-        array_metadata = copy(self.dataset[self.parameter].attrs)
-        # merging history metadata (the only common keyword)
-        self.metadata["history"] = (
-            "Dataset: "
-            + self.metadata["history"]
-            + "; DataArray: "
-            + array_metadata["history"]
-        )
-        del array_metadata["history"]
+        array_metadata = {}
+        for p in self.parameters:
+            md = copy(self.dataset[p].attrs)
+            for key in md:
+                array_metadata["_".join([p, key])] = md[key]
         self.metadata.update(array_metadata)
 
     @property
@@ -144,9 +186,9 @@ class GSWPDataset:
         """
         try:
             data = {
-                self.parameter: self.dataset[self.parameter]
-                .sel(time=timestamp)
+                p: self.dataset[p].sel(time=timestamp)
                 .values[self.grid.activegpis]
+                for p in self.parameters
             }
             return Image(self.lon, self.lat, data, self.metadata, timestamp)
         except KeyError:  # pragma: no cover
@@ -179,7 +221,7 @@ class GSWPDataset:
         )
 
 
-class GSWPTs(GriddedNcOrthoMultiTs):
+class GriddedXrOrthoMultiTs(GriddedNcOrthoMultiTs):
     def __init__(self, ts_path, grid_path=None, **kwargs):
         """
         Class for reading GSWP time series after reshuffling.

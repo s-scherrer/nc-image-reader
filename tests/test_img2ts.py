@@ -3,8 +3,10 @@ from pathlib import Path
 import pytest
 import shutil
 
-from gswp.interface import GSWPTs
-from gswp.reshuffle import img2ts, main, parse_args, _create_reshuffler
+from nc_image_reader.interface import GriddedXrOrthoMultiTs
+from nc_image_reader.reshuffle import (
+    img2ts, main, parse_args
+)
 
 
 @pytest.fixture
@@ -16,7 +18,7 @@ def timeseries_root():
 @pytest.fixture
 def dataset_root():
     here = Path(__file__).resolve().parent
-    return here / "test_data"
+    return here / "test_data" / "cmip6"
 
 
 def test_img2ts(timeseries_root, dataset_root):
@@ -34,7 +36,8 @@ def test_img2ts(timeseries_root, dataset_root):
         ts_root = timeseries_root / f"only_land={only_land}"
 
         reshuffler = img2ts(
-            dataset_root, ts_root, start, end, only_land=only_land
+            "mrsos", "cmip6", dataset_root, ts_root, start, end,
+            only_land=only_land
         )
 
         assert len(reshuffler.target_grid.arrcell) > 1
@@ -45,7 +48,7 @@ def test_img2ts(timeseries_root, dataset_root):
         assert (ts_root / "1001.nc").exists()
 
         # try reading time series
-        dataset[only_land] = GSWPTs(str(ts_root))
+        dataset[only_land] = GriddedXrOrthoMultiTs(str(ts_root))
 
     # get total grid size from test data
     ds = reshuffler.imgin
@@ -91,6 +94,8 @@ def commandline_args(dataset_root, timeseries_root):
         str(timeseries_root),
         "1970-01-01",
         "1970-01-10",
+        "--parameters", "mrsos",
+        "--dataformat", "cmip6",
     ]
 
 
@@ -98,7 +103,7 @@ def test_parse_args(commandline_args, dataset_root, timeseries_root):
     args = parse_args(commandline_args)
 
     assert np.all(args.bbox == [-20, -20, 20, 20])
-    assert args.land_points == True
+    assert args.land_points
     assert args.imgbuffer == 10
     assert args.start == np.datetime64("1970-01-01")
     assert args.end == np.datetime64("1970-01-10")
@@ -121,7 +126,8 @@ def test_main(timeseries_root, commandline_args):
 
 def test_bbox(commandline_args):
     args = parse_args(commandline_args)
-    reshuffler = _create_reshuffler(
+    reshuffler = img2ts(
+        "mrsos", "cmip6",
         args.dataset_root,
         args.timeseries_root,
         args.start,
@@ -129,8 +135,8 @@ def test_bbox(commandline_args):
         imgbuffer=args.imgbuffer,
         only_land=args.land_points,
         bbox=args.bbox,
+        reshuffle=False
     )
 
     assert len(reshuffler.target_grid.get_cells()) == 36
     assert reshuffler.imgin.lonmin == -20
-    

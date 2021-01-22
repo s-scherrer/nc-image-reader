@@ -31,7 +31,7 @@ import numpy as np
 import sys
 
 from repurpose.img2ts import Img2Ts
-from gswp.interface import GSWPDataset
+from nc_image_reader.interface import GriddedXrOrthoMultiImage
 
 
 def str2bool(val):
@@ -81,12 +81,27 @@ def parse_args(args):
     )
 
     parser.add_argument(
+        "--parameters",
+        type=str,
+        nargs="+",
+        required=True,
+        help="Parameters to process."
+    )
+
+    parser.add_argument(
+        "--dataformat",
+        type=str,
+        required=True,
+        help="Data format, can be 'cmip6' or 'lis_noah'"
+    )
+
+    parser.add_argument(
         "--land_points",
         type=str2bool,
         default="False",
         help=(
-            "Set True to convert only land points as defined"
-            " in the GLDAS land mask (faster and less/smaller files)"
+            "Set True to convert only land points"
+            " (faster and less/smaller files)"
         ),
     )
 
@@ -113,6 +128,15 @@ def parse_args(args):
         ),
     )
 
+    parser.add_argument(
+        "--cellsize",
+        type=float,
+        default=5.0,
+        help=(
+            "Size of single file cells. Default is 5.0."
+        ),
+    )
+
     args = parser.parse_args(args)
     # set defaults that can not be handled by argparse
 
@@ -128,7 +152,9 @@ def parse_args(args):
     return args
 
 
-def _create_reshuffler(
+def img2ts(
+    parameters,
+    dataformat,
     dataset_root,
     timeseries_root,
     startdate,
@@ -136,12 +162,18 @@ def _create_reshuffler(
     imgbuffer=365,
     only_land=False,
     bbox=None,
+    reshuffle=True,
+    cellsize=0.5,
 ):
     """
-    Create a reshuffler for converting images to timeseries.
+    Convert the images to time series.
 
     Parameters
     ----------
+    parameters: str or list of str
+        Name of the parameters to process.
+    dataformat: str
+        Currently available are "cmip6" and "lis_noah".
     dataset_root : str or Path
         Path of the directory containing the data files.
     timeseries_root : str or Path
@@ -157,13 +189,20 @@ def _create_reshuffler(
     bbox : list/tuple
         Bounding box parameters in the form [min_lon, min_lat, max_lon,
         max_lat]
+    reshuffle : bool, optional
+        Whether to run the reshuffling
+    cellsize : float, optional
+        Size of cell files in degrees. Default is 5.0.
 
     Returns
     -------
     reshuffler : Img2Ts object
     """
-    input_dataset = GSWPDataset(
+
+    input_dataset = GriddedXrOrthoMultiImage(
         Path(dataset_root) / "*.nc",
+        parameters,
+        dataformat,
         only_land=only_land,
         bbox=bbox,
     )
@@ -181,54 +220,8 @@ def _create_reshuffler(
         cellsize_lat=input_dataset.cellsize,
         cellsize_lon=input_dataset.cellsize,
     )
-    return reshuffler
-
-
-def img2ts(
-    dataset_root,
-    timeseries_root,
-    startdate,
-    enddate,
-    imgbuffer=365,
-    only_land=False,
-    bbox=None,
-):
-    """
-    Convert the images to time series.
-
-    Parameters
-    ----------
-    dataset_root : str or Path
-        Path of the directory containing the data files.
-    timeseries_root : str or Path
-        Path of where to store the timeseries files.
-    startdate : np.datetime64
-        Start date of processing
-    enddate : np.datetime64
-        End date of processing
-    imgbuffer : int, optional (default: 365)
-        Number of images to read at once.
-    only_land : bool, optional (default: False)
-        Use the land mask to reduce the grid to land grid points only.
-    bbox : list/tuple
-        Bounding box parameters in the form [min_lon, min_lat, max_lon,
-        max_lat]
-
-    Returns
-    -------
-    reshuffler : Img2Ts object
-    """
-
-    reshuffler = _create_reshuffler(
-        dataset_root,
-        timeseries_root,
-        startdate,
-        enddate,
-        imgbuffer=imgbuffer,
-        only_land=only_land,
-        bbox=bbox,
-    )
-    reshuffler.calc()
+    if reshuffle:
+        reshuffler.calc()
 
     # returned, mainly for testing/debugging
     return reshuffler
@@ -245,6 +238,8 @@ def main(args):
     """
     args = parse_args(args)
     reshuffler = img2ts(
+        args.parameters,
+        args.dataformat,
         args.dataset_root,
         args.timeseries_root,
         args.start,
@@ -252,6 +247,7 @@ def main(args):
         imgbuffer=args.imgbuffer,
         only_land=args.land_points,
         bbox=args.bbox,
+        cellsize=args.cellsize,
     )
 
 

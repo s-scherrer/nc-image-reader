@@ -3,13 +3,14 @@ import numpy as np
 from pathlib import Path
 import pytest
 
-from gswp.interface import GSWPDataset
+from nc_image_reader.interface import GriddedXrOrthoMultiImage
+from nc_image_reader.loading_funcs import load_cmip6
 
 
 @pytest.fixture
 def filename_pattern():
     here = Path(__file__).resolve().parent
-    return here / "test_data" / "*.nc"
+    return here / "test_data" / "cmip6" / "*.nc"
 
 
 def test_datetime_compatibility(filename_pattern):
@@ -18,7 +19,7 @@ def test_datetime_compatibility(filename_pattern):
     tstamps_for_daterange works.
     """
 
-    ds = GSWPDataset(filename_pattern)
+    ds = GriddedXrOrthoMultiImage(filename_pattern, "mrsos", "cmip6")
     date_array = ds.tstamps_for_daterange("1970-01-01", "1970-01-31")
     time = date_array[0]
 
@@ -33,7 +34,9 @@ def test_only_land(filename_pattern):
     """
     Tests if the only_land feature works as expected.
     """
-    ds = GSWPDataset(filename_pattern, only_land=True)
+    ds = GriddedXrOrthoMultiImage(
+        filename_pattern, "mrsos", "cmip6", only_land=True
+    )
     num_gpis = ds.dataset.mrsos.isel(time=0).size
 
     assert len(ds.grid.activegpis) < num_gpis
@@ -56,8 +59,11 @@ def test_bbox(filename_pattern):
     max_lon = -150
     max_lat = 25
 
-    ds = GSWPDataset(
-        filename_pattern, bbox=[min_lon, min_lat, max_lon, max_lat]
+    ds = GriddedXrOrthoMultiImage(
+        filename_pattern,
+        "mrsos",
+        "cmip6",
+        bbox=[min_lon, min_lat, max_lon, max_lat]
     )
     num_gpis = ds.dataset.mrsos.isel(time=0).size
 
@@ -76,9 +82,24 @@ def test_grid_lons(filename_pattern):
     Tests if the grid of the dataset has only longitudes between -180 and 180
     """
 
-    ds = GSWPDataset(filename_pattern)
+    ds = GriddedXrOrthoMultiImage(filename_pattern, "mrsos", "cmip6")
 
     lons = ds.grid.arrlon
     assert np.all(lons <= 180)
     assert np.all(lons > -180)
     assert np.any(lons < 0)
+
+
+def test_loadin_func(filename_pattern):
+    """
+    Test if passing a loading function also works.
+    """
+    ds = GriddedXrOrthoMultiImage(filename_pattern, "mrsos", load_cmip6)
+    date_array = ds.tstamps_for_daterange("1970-01-01", "1970-01-31")
+    time = date_array[0]
+
+    assert isinstance(time, datetime)
+
+    # try reading
+    img = ds.read(time)
+    assert img.timestamp == time

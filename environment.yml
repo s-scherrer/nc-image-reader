@@ -1,4 +1,4 @@
-name: gswp
+name: nc_image_reader
 channels:
   - conda-forge
   - defaults
