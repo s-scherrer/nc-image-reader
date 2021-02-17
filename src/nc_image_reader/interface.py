@@ -62,7 +62,7 @@ class GriddedXrOrthoMultiImage:
 
     Parameters
     ----------
-    fname : str
+    fname : str or Path
         Filename of the dataset. Might be a pattern that can be used with
         ``xarray.open_mfdataset``.
     parameter : str or list of str
@@ -104,7 +104,7 @@ class GriddedXrOrthoMultiImage:
         self.only_land = only_land
 
         # load dataset
-        self.dataset = loading_func(fname, self.parameters)
+        self.dataset = loading_func(str(fname), self.parameters)
 
         # Img2Ts prefers flattened data
         self.dataset = self.dataset.stack(
