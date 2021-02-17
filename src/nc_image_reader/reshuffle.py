@@ -21,7 +21,7 @@
 # SOFTWARE.
 
 """
-Module for a command line interface to convert the GLDAS data into a
+Module for a command line interface to convert the netcdf image data into a
 time series format using the repurpose package
 """
 
@@ -53,7 +53,7 @@ def parse_args(args):
         Command line arguments.
     """
     parser = argparse.ArgumentParser(
-        description="Convert GLDAS data to time series format."
+        description="Convert data to time series format."
     )
     parser.add_argument(
         "dataset_root",

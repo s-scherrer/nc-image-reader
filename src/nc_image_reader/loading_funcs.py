@@ -61,3 +61,45 @@ def load_lis_noah(fname, parameters):
             raise ValueError(f"Parameter '{p}' is not available.")
     ds = ds[parameters]
     return ds
+
+
+def load_lis_noahmp(fname, parameters):
+    # prepare ds
+    ds = xr.open_mfdataset(fname, parallel=True, concat_dim="time")
+    ds = ds.reindex(
+        east_west=np.unique(ds.lon.isel(time=0)),
+        north_south=np.unique(ds.lat.isel(time=0))
+    )
+    ds = ds.drop_vars(["lon", "lat"])
+    ds = ds.rename({"east_west": "lon", "north_south": "lat"})
+
+    # extract parameters
+    for p in parameters:
+        if p == "ssm":
+            ds[p] = ds.SoilMoist_inst.isel(SoilMoist_profiles=0)
+            ds[p].standard_name = "surface_soil_moisture"
+            ds[p].long_name = "surface soil moisture content (up to 10cm)"
+        elif p == "rzsm":
+            ds[p] = ds.SoilMoist_inst.isel(SoilMoist_profiles=3)
+            ds[p].standard_name = "root_zone_soil_moisture"
+            ds[p].long_name = "root zone soil moisture content (up to 1m)"
+        elif p == "leaf_mass":
+            ds[p] = ds.LeafMass_tavg
+        elif p == "wood_mass":
+            ds[p] = ds.WoodMass_tavg
+        elif p == "stem_mass":
+            ds[p] = ds.StemMass_tavg
+        elif p == "root_mass":
+            ds[p] = ds.RootMass_tavg
+        elif p == "LAI":
+            ds[p] = ds.LAI_inst
+        elif p == "GPP":
+            ds[p] = ds.GPP_tavg
+        elif p == "NPP":
+            ds[p] = ds.NPP_tavg
+        elif p == "tveg":
+            ds[p] = ds.TVeg_tavg
+        else:  # pragma: no cover
+            raise ValueError(f"Parameter '{p}' is not available.")
+    ds = ds[parameters]
+    return ds
