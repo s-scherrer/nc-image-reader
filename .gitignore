@@ -48,3 +48,7 @@ MANIFEST
 
 # Per-project virtualenvs
 .venv*/
+
+
+# test data
+large_file_testing/*.nc
