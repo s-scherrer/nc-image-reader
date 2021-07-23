@@ -54,7 +54,7 @@ def create_transposed_netcdf(
     input_dim_sizes = first_img.shape
     old_pos = input_dim_names.index(new_last_dim)
 
-    if input_dim_names[-1] == new_last_dim:
+    if input_dim_names[-1] == new_last_dim:  # pragma: no cover
         print(f"{new_last_dim} is already the last dimension")
 
     # get new dim names in the correct order
@@ -69,17 +69,22 @@ def create_transposed_netcdf(
     new_dim_sizes = tuple(new_dim_sizes)
 
     # clean the chunks argument (replace -1 entries)
+    size = dtype.itemsize
     if chunks is not None:
         chunks = tuple(
             new_dim_sizes[i] if val == -1 else val
             for i, val in enumerate(chunks)
         )
+        chunksize_MB = np.prod(chunks) * size / 1024 ** 2
+        logging.info(
+            f"create_transposed_netcdf: Creating chunks {chunks}"
+            f" with chunksize {chunksize_MB:.2f} MB"
+        )
 
+    len_new_dim = new_dim_sizes[-1]
     if isinstance(reader, XarrayImageReader):
         # in case we have an XarrayImageReader, we can efficiently read a full
         # block of data, whose size is given by the `memory` argument
-        len_new_dim = new_dim_sizes[-1]
-        size = dtype.itemsize
         imagesize_GB = np.prod(new_dim_sizes[:-1]) * size / 1024 ** 3
         # we need to divide by two, because we need intermediate storage for
         # the transposing
@@ -92,17 +97,12 @@ def create_transposed_netcdf(
     else:
         # otherwise we'll just read single images
         stepsize = 1
-    block_start = np.arange(0, len_new_dim + stepsize - 1, stepsize)
+    block_start = list(
+        map(int, np.arange(0, len_new_dim + stepsize - 0.5, stepsize))
+    )
     block_start[-1] = min(block_start[-1], len_new_dim)
 
-    if chunks:
-        chunksize_MB = np.prod(chunks) * size / 1024 ** 2
-        logging.info(
-            f"create_transposed_netcdf: Creating chunks {chunks}"
-            f" with chunksize {chunksize_MB:.2f} MB"
-        )
-
-    with h5netcdf.File(outfname, "w") as newfile:
+    with h5netcdf.File(outfname, "w", decode_vlen_strings=False) as newfile:
 
         # create dimensions and coordinates
         newfile.dimensions = dict(zip(new_dim_names, new_dim_sizes))
@@ -114,6 +114,8 @@ def create_transposed_netcdf(
             else:
                 coord = first_img[dim].values
             newfile.create_variable(dim, (dim,), dtype, data=coord)
+        newfile[new_last_dim].attrs["units"] = time_units
+        
 
         # create new variable
         newvar = newfile.create_variable(
@@ -121,9 +123,9 @@ def create_transposed_netcdf(
         )
 
         # copy metadata
-        for k, v in reader.dataset_metadata:
+        for k, v in reader.dataset_metadata.items():
             newfile.attrs[k] = v
-        for k, v in reader.array_metadata:
+        for k, v in reader.array_metadata.items():
             newfile[reader.varname].attrs[k] = v
 
         # tqdm adds a nice progress bar
@@ -135,6 +137,4 @@ def create_transposed_netcdf(
             )
             newvar[..., slice(s, e)] = transposed_block
 
-    logging.info(
-        "create_transposed_netcdf: Finished writing transposed file."
-    )
+    logging.info("create_transposed_netcdf: Finished writing transposed file.")

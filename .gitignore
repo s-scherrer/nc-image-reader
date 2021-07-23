@@ -52,3 +52,4 @@ MANIFEST
 
 # test data
 large_file_testing/*.nc
+lis_noah_stacked.nc

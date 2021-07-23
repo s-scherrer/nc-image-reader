@@ -32,12 +32,10 @@ import numpy as np
 from typing import Union, Sequence
 import sys
 
+from repurpose.img2ts import Img2Ts
+
 from nc_image_reader.readers import XarrayImageReader, DirectoryImageReader
 from nc_image_reader.transpose import create_transposed_netcdf
-
-
-def str2bool(val):
-    return val in ["True", "true", "t", "T", "1"]
 
 
 def mkdate(datestring):
@@ -45,11 +43,12 @@ def mkdate(datestring):
         return datetime.datetime.strptime(datestring, "%Y-%m-%d")
     elif len(datestring) == 16:
         return datetime.datetime.strptime(datestring, "%Y-%m-%dT%H:%M")
-    else:
+    else:  # pragma: no cover
         raise ValueError(f"Invalid date: {datestring}")
 
 
-class ArgumentParser(argparse.ArgumentParser):
+class ReaderArgumentParser(argparse.ArgumentParser):
+
     def __init__(self, description):
         super().__init__(description=description)
 
@@ -80,7 +79,7 @@ class ArgumentParser(argparse.ArgumentParser):
             ),
         )
         self.add_argument(
-            "--parameters",
+            "--parameter",
             type=str,
             required=True,
             help="Parameter to process.",
@@ -90,7 +89,7 @@ class ArgumentParser(argparse.ArgumentParser):
             type=str,
             default="*.nc",
             help=(
-                "If dataset_root is a directory, glob pattern to match files"
+                "If DATASET_ROOT is a directory, glob pattern to match files"
                 " Default is '*.nc'"
             ),
         )
@@ -107,7 +106,7 @@ class ArgumentParser(argparse.ArgumentParser):
             "--time_regex_pattern",
             type=str,
             help=(
-                "If dataset_root is a directory, a regex pattern to select"
+                "If DATASET_ROOT is a directory, a regex pattern to select"
                 " the time string from the filename. If this is used, TIME_FMT"
                 " must be chosen accordingly. See nc_image_reader.readers for"
                 " more info."
@@ -144,11 +143,32 @@ class ArgumentParser(argparse.ArgumentParser):
             "--bbox",
             type=float,
             default=None,
+            metavar=("MIN_LON", "MIN_LAT", "MAX_LON", "MAX_LAT"),
             nargs=4,
             help=(
-                "min_lon min_lat max_lon max_lat. "
                 "Bounding Box (lower left and upper right corner) "
-                "of area to reshuffle (WGS84)"
+                "of area to reshuffle"
+            ),
+        )
+        self.add_argument(
+            "--landmask",
+            type=str,
+            metavar="[FILENAME:]VARNAME",
+            help=(
+                "Either only the variable name of a variable in the dataset"
+                " that is False over non-land points, or \"<filename>:<varname>\""
+                " if the landmask is in a different file. The landmask must have"
+                " the same coordinates as the dataset."
+            ),
+        )
+        self.add_argument(
+            "--var_dim_selection",
+            type=str,
+            metavar="DIMNAME:IDX",
+            nargs="+",
+            help=(
+                "Dimension names and indices for additional dimensions, e.g."
+                " levels, separated by colons"
             ),
         )
         self.add_argument(
@@ -159,9 +179,10 @@ class ArgumentParser(argparse.ArgumentParser):
         )
 
 
-class RepurposeArgumentParser(ArgumentParser):
+class RepurposeArgumentParser(ReaderArgumentParser):
     def __init__(self):
         super().__init__("Converts data to time series format.")
+        self.prog = "repurpose_netcdf"
         self.add_argument(
             "--imgbuffer",
             type=int,
@@ -174,9 +195,10 @@ class RepurposeArgumentParser(ArgumentParser):
         )
 
 
-class TransposeArgumentParser(ArgumentParser):
+class TransposeArgumentParser(ReaderArgumentParser):
     def __init__(self):
         super().__init__("Converts data to transposed netCDF.")
+        self.prog = "transpose_netcdf"
         self.add_argument(
             "--memory",
             type=float,
@@ -205,21 +227,18 @@ def parse_args(parser, args):
     -------
     reader, args
     """
-    parser = argparse.ArgumentParser(
-        description="Convert data to stacked transposed netCDF."
-    )
-
     args = parser.parse_args(args)
-    # set defaults that can not be handled by argparse
-
     print(
-        "Converting data from {} to"
-        " {} into folder {}.".format(
-            np.datetime_as_string(args.start, unit="s"),
-            np.datetime_as_string(args.end, unit="s"),
-            args.timeseries_root,
-        )
+        f"Converting data from {args.start} to {args.end}"
+        f" into directory {args.output_root}."
     )
+
+    var_dim_selection = args.var_dim_selection
+    if var_dim_selection is not None:
+        var_dim_selection = {}
+        for argument in args.var_dim_selection:
+            dimname, val = argument.split(":")
+            var_dim_selection[dimname] = int(val)
 
     common_reader_kwargs = dict(
         latname=args.latname,
@@ -229,22 +248,21 @@ def parse_args(parser, args):
         locdim=args.locdim,
         bbox=args.bbox,
         cellsize=args.cellsize,
+        landmask=args.landmask,
+        var_dim_selection=var_dim_selection
     )
 
-    input_path = Path(dataset_root)
+    input_path = Path(args.dataset_root)
     if input_path.is_file():
         reader = XarrayImageReader(
             input_path,
-            parameter,
-            fmt=args.time_fmt,
-            pattern=args.pattern,
-            time_regex_pattern=args.time_regex_pattern,
+            args.parameter,
             **common_reader_kwargs,
         )
     else:
         reader = DirectoryImageReader(
             input_path,
-            parameter,
+            args.parameter,
             fmt=args.time_fmt,
             pattern=args.pattern,
             time_regex_pattern=args.time_regex_pattern,
@@ -254,7 +272,7 @@ def parse_args(parser, args):
     return reader, args
 
 
-def reshuffle(args):
+def repurpose(args):
     parser = RepurposeArgumentParser()
     reader, args = parse_args(parser, args)
     reshuffler = Img2Ts(
@@ -264,7 +282,7 @@ def reshuffle(args):
         enddate=args.end,
         ts_attributes=reader.dataset_metadata,
         zlib=True,
-        imgbuffer=imgbuffer,
+        imgbuffer=args.imgbuffer,
         # this is necessary currently due to bug in repurpose
         cellsize_lat=args.cellsize,
         cellsize_lon=args.cellsize,
@@ -275,18 +293,21 @@ def reshuffle(args):
 def transpose(args):
     parser = TransposeArgumentParser()
     reader, args = parse_args(parser, args)
+    chunks = args.chunks
+    if chunks is not None:
+        chunks = tuple(chunks)
     create_transposed_netcdf(
         reader,
         args.output_root,
         start=args.start,
         end=args.end,
         memory=args.memory,
-        chunks=tuple(args.chunks),
+        chunks=chunks,
     )
 
 
-def run_reshuffle():  # pragma: no cover
-    reshuffle(sys.argv[1:])
+def run_repurpose():  # pragma: no cover
+    repurpose(sys.argv[1:])
 
 
 def run_transpose():  # pragma: no cover

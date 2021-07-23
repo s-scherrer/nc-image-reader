@@ -18,6 +18,7 @@ import xarray as xr
 
 from pygeobase.object_base import Image
 from pygeogrids.grids import gridfromdims, BasicGrid, CellGrid
+from pygeogrids.netcdf import load_grid
 from pynetcf.time_series import GriddedNcOrthoMultiTs as _GriddedNcOrthoMultiTs
 
 from .exceptions import ReaderError
@@ -49,13 +50,13 @@ class XarrayMetadataMixin:
     def _grid_from_xarray(self, ds: xr.Dataset) -> CellGrid:
 
         # if using regular lat-lon grid, we can use gridfromdims
-        lat = self._get_lat(ds)
-        lon = self._get_lon(ds)
+        self.lat = self._get_lat(ds)
+        self.lon = self._get_lon(ds)
         if self._has_regular_grid:
-            grid = gridfromdims(lon, lat)
+            grid = gridfromdims(self.lon, self.lat)
             locdim = "loc"
         else:
-            grid = BasicGrid(lon, lat)
+            grid = BasicGrid(self.lon, self.lat)
 
         if hasattr(self, "landmask") and self.landmask is not None:
             if self._has_regular_grid:
@@ -100,21 +101,20 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
     - self.read
     - self.tstamps_for_daterange
     - self._grid_from_xarray
+    - self.read_block
 
     and therefore meets all prerequisites for Img2Ts.
 
-    Child classes must override `_read_image` and should call
-    `_grid_from_xarray` and `_metadata_from_xarray` in their constructor after
-    calling the parent constructor.
-    They need to set:
-    - self.grid
-    - self.timestamps
-    - self.dataset_metadata
-    - self.array_metadata
+    Child classes must override `_read_image` and need to set self.timestamps.
+
+    Note that the constructor needs a dataset from which to derive the grid,
+    the metadata, and the land mask, so you might have to get this first in the
+    child classes, before you can call the parent constructor.
     """
 
     def __init__(
         self,
+        ds: xr.Dataset,
         varname: str,
         var_dim_selection: dict = None,
         timename: str = "time",
@@ -123,7 +123,7 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
         latdim: str = None,
         londim: str = None,
         locdim: str = None,
-        landmask: xr.DataArray = None,
+        landmask: Union[xr.DataArray, str] = None,
         bbox: Iterable = None,
         cellsize: float = None,
     ):
@@ -136,12 +136,29 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
         self.londim = londim
         self.locdim = locdim
         self._has_regular_grid = locdim is None
-        self.landmask = landmask
         self.bbox = bbox
         self.cellsize = cellsize
+        # Landmask can be "<filename>:<variable_name>", "<variable_name>", or a
+        # xr.DataArray. The latter two cases are handled elsewhere
+        if isinstance(landmask, str):
+            if ":" in landmask:
+                fname, vname = landmask.split(":")
+                self.landmask = xr.open_dataset(fname)[vname]
+            else:
+                self.landmask = ds[landmask]
+        else:
+            self.landmask = landmask
+
+        self.grid = self._grid_from_xarray(ds)
+        (
+            self.dataset_metadata,
+            self.array_metadata,
+        ) = self._metadata_from_xarray(ds)
 
     @abstractmethod
-    def _read_image(self, timestamp: datetime.datetime) -> xr.Dataset:
+    def _read_image(
+        self, timestamp: datetime.datetime
+    ) -> xr.Dataset:  # pragma: no cover
         """
         Returns a single image for the given timestamp
         """
@@ -178,11 +195,10 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
             londim = self.londim if self.londim is not None else self.lonname
             expected_dims = [latdim, londim, self.timename]
             for d in img.dims:
-                if d not in expected_dims:
+                if d not in expected_dims:  # pragma: no cover
                     raise ReaderError(
                         f"Unexpected dimension {d} in image for {timestamp}."
                     )
-
             if self._has_regular_grid:
                 img = img.stack(dimensions={"loc": (latdim, londim)})
             data = {self.varname: img.values[self.grid.activegpis]}
@@ -190,7 +206,7 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
             return Image(
                 self.grid.arrlon, self.grid.arrlat, data, metadata, timestamp
             )
-        else:
+        else:  # pragma: no cover
             raise ReaderError(
                 f"Timestamp {timestamp} is not available in the dataset!"
             )
@@ -220,6 +236,19 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
             end = self.timestamps[-1]
         return list(filter(lambda t: t >= start and t <= end, self.timestamps))
 
+    def _read_block(self, timestamps: Iterable) -> xr.DataArray:
+        imgs = []
+        for tstamp in timestamps:
+            imgs.append(
+                self._read_image(tstamp)[self.varname].isel(
+                    self.var_dim_selection
+                )
+            )
+        block = xr.concat(imgs, dim=self.timename).assign_coords(
+            {self.timename: timestamps}
+        )
+        return block
+
     def read_block(
         self,
         start: datetime.datetime = None,
@@ -242,22 +271,34 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
             this will have ``self.latname`` and ``self.lonname`` as dimensions.
         """
         timestamps = self.tstamps_for_daterange(start, end)
-        imgs = []
-        for tstamp in timestamps:
-            ds = self._read_image(tstamp)
-            imgs.append(ds[self.varname].isel(self.var_dim_selection))
+        block = self._read_block(timestamps)
+        # we might need to apply the landmask, this is applied before renaming
+        # the coordinates, because it is in the original coordinates
+        if self.landmask is not None:
+            block = block.where(self.landmask)
 
-        # concatenate and reformat so that we get a nice lat/lon/time block out
-        block = xr.concat(imgs, dim=self.timename).assign_coords(
-            {self.timename: timestamps}
-        )
         if self.latdim is not None:
             block = block.rename({self.latdim: self.latname}).assign_coords(
-                {self.latname: self._get_lat(ds).values}
+                {self.latname: self.lat.values}
             )
         if self.londim is not None:
             block = block.rename({self.londim: self.lonname}).assign_coords(
-                {self.lonname: self._get_lon(ds).values}
+                {self.lonname: self.lon.values}
+            )
+
+        # bounding box is applied after assigning the coordinates
+        if self.bbox is not None:
+            lonmin, latmin, lonmax, latmax = (*self.bbox,)
+            block = block.where(
+                (
+                    (latmin <= block[self.latname])
+                    & (block[self.latname] <= latmax)
+                    & (
+                        (lonmin <= block[self.lonname])
+                        & (block[self.lonname] <= lonmax)
+                    )
+                ),
+                drop=True,
             )
         return block
 
@@ -326,8 +367,15 @@ class DirectoryImageReader(XarrayImageReaderBase):
         The name of the location dimension for non-rectangular grids.
     timename : str, optional
         The name of the time coordinate, default is "time".
-    landmask : xr.DataArray, optional
-        A land mask to be applied to reduce storage size.
+    landmask : xr.DataArray or str, optional
+        A land mask to be applied to reduce storage size. This can either be a
+        xr.DataArray of the same shape as the dataset images with ``False`` at
+        non-land points, or a string.
+        If it is a string, it can either be the name of a variable that is also
+        in the dataset, or it can follow the pattern
+        "<filename>:<variable_name>". In the latter case, the part before the
+        colon is interpreted as path to a netCDF file, the part after the colon
+        as the variable name of the landmask within this file.
     bbox : Iterable, optional
         (lonmin, latmin, lonmax, latmax) of a bounding box.
     cellsize : float, optional
@@ -353,7 +401,27 @@ class DirectoryImageReader(XarrayImageReaderBase):
         cellsize: float = None,
     ):
 
+        # first, we walk over the whole directory subtree and find any files
+        # that match our pattern
+        directory = Path(directory)
+        filepaths = {}
+        for root, dirs, files in os.walk(directory):
+            for fname in files:
+                if fnmatch.fnmatch(fname, pattern):
+                    filepaths[fname] = Path(root) / fname
+
+        if not filepaths:  # pragma: no cover
+            raise ReaderError(
+                f"No files matching pattern {pattern} in directory "
+                f"{str(directory)}"
+            )
+
+        ds = xr.open_dataset(next(iter(filepaths.values())))
+
+        # now we can call the parent constructor using the dataset from the
+        # first file
         super().__init__(
+            ds,
             varname,
             var_dim_selection=var_dim_selection,
             timename=timename,
@@ -367,29 +435,6 @@ class DirectoryImageReader(XarrayImageReaderBase):
             cellsize=cellsize,
         )
 
-        # first, we walk over the whole directory subtree and find any files
-        # that match our pattern
-        directory = Path(directory)
-        filepaths = {}
-        for root, dirs, files in os.walk(directory):
-            for fname in files:
-                if fnmatch.fnmatch(fname, pattern):
-                    filepaths[fname] = Path(root) / fname
-
-        if not filepaths:
-            raise ReaderError(
-                f"No files matching pattern {pattern} in directory "
-                f"{str(directory)}"
-            )
-
-        # create the grid from the first file
-        ds = xr.open_dataset(next(iter(filepaths.values())))
-        self.grid = self._grid_from_xarray(ds)
-        (
-            self.dataset_metadata,
-            self.array_metadata,
-        ) = self._metadata_from_xarray(ds)
-
         # if possible, deduce the timestamps from the filenames and create a
         # dictionary mapping timestamps to file paths
         self.filepaths = {}
@@ -399,7 +444,7 @@ class DirectoryImageReader(XarrayImageReaderBase):
             for fname, path in filepaths.items():
                 if time_regex_pattern is not None:
                     match = time_pattern.findall(fname)
-                    if not match:
+                    if not match:  # pragma: no cover
                         raise ReaderError(
                             f"Pattern {time_regex_pattern} did not match "
                             f"{fname}"
@@ -412,13 +457,13 @@ class DirectoryImageReader(XarrayImageReaderBase):
         else:
             for _, path in filepaths.items():
                 ds = xr.open_dataset(path)
-                if timename not in ds.indexes:
+                if timename not in ds.indexes:  # pragma: no cover
                     raise ReaderError(
                         f"Time dimension {timename} does not exist in "
                         f"{str(path)}"
                     )
                 time = ds.indexes[timename]
-                if len(time) != 1:
+                if len(time) != 1:  # pragma: no cover
                     raise ReaderError(
                         f"Expected only a single timestamp, found {str(time)} "
                         f" in {str(path)}"
@@ -476,8 +521,15 @@ class XarrayImageReader(XarrayImageReaderBase):
         longitude coordinate variable.
     locdim : str, optional
         The name of the location dimension for non-rectangular grids.
-    landmask : xr.DataArray, optional
-        A land mask to be applied to reduce storage size.
+    landmask : xr.DataArray or str, optional
+        A land mask to be applied to reduce storage size. This can either be a
+        xr.DataArray of the same shape as the dataset images with ``False`` at
+        non-land points, or a string.
+        If it is a string, it can either be the name of a variable that is also
+        in the dataset, or it can follow the pattern
+        "<filename>:<variable_name>". In the latter case, the part before the
+        colon is interpreted as path to a netCDF file, the part after the colon
+        as the variable name of the landmask within this file.
     bbox : Iterable, optional
         (lonmin, latmin, lonmax, latmax) of a bounding box.
     cellsize : float, optional
@@ -499,9 +551,11 @@ class XarrayImageReader(XarrayImageReaderBase):
         bbox: Iterable = None,
         cellsize: float = None,
     ):
-        # this already sets up the grid, afterwards we only need to get the
-        # timestamps
+
+        if isinstance(ds, (str, Path)):
+            ds = xr.open_dataset(ds)
         super().__init__(
+            ds,
             varname,
             var_dim_selection=var_dim_selection,
             timename=timename,
@@ -514,56 +568,16 @@ class XarrayImageReader(XarrayImageReaderBase):
             bbox=bbox,
             cellsize=cellsize,
         )
-
-        if isinstance(ds, (str, Path)):
-            ds = xr.open_dataset(ds)
-
         self.data = ds
-        self.grid = self._grid_from_xarray(ds)
-        (
-            self.dataset_metadata,
-            self.array_metadata,
-        ) = self._metadata_from_xarray(ds)
         self.timestamps = ds.indexes[self.timename].to_pydatetime()
 
     def _read_image(self, timestamp):
         return self.data.sel({self.timename: timestamp})
 
-    def read_block(
-        self,
-        start: datetime.datetime = None,
-        end: datetime.datetime = None,
-    ) -> xr.DataArray:
-        """
-        Reads a block of the image stack.
-
-        Parameters
-        ----------
-        start : datetime.datetime, optional
-            If not given, start at first timestamp in dataset.
-        end : datetime.datetime, optional
-            If not given, end at last timestamp in dataset.
-
-        Returns
-        -------
-        block : xr.DataArray
-            A block of the dataset as DataArray. In case of a regular grid,
-            this will have ``self.latname`` and ``self.lonname`` as dimensions.
-        """
-        tstamps = self.tstamps_for_daterange(start=start, end=end)
-        block = self.data.sel({self.timename: tstamps})[self.varname].isel(
+    def _read_block(self, timestamps: Iterable) -> xr.DataArray:
+        return self.data.sel({self.timename: timestamps})[self.varname].isel(
             self.var_dim_selection
         )
-        # reformat so that we get a nice lat/lon/time block out
-        if self.latdim is not None:
-            block = block.rename({self.latdim: self.latname}).assign_coords(
-                {self.latname: self._get_lat(ds).values}
-            )
-        if self.londim is not None:
-            block = block.rename({self.londim: self.lonname}).assign_coords(
-                {self.lonname: self._get_lon(ds).values}
-            )
-        return block
 
 
 class GriddedNcOrthoMultiTs(_GriddedNcOrthoMultiTs):
@@ -667,6 +681,7 @@ class XarrayTSReader(XarrayMetadataMixin):
 
     def __init__(
         self,
+        ds: xr.Dataset,
         varname: str,
         var_dim_selection: dict = None,
         timename: str = "time",
@@ -692,7 +707,18 @@ class XarrayTSReader(XarrayMetadataMixin):
         self.bbox = bbox
         self.cellsize = cellsize
 
-        self.data = ds[self.varname].isel(self.var_dim_selection)
+        if self._has_regular_grid:
+            # we have to reshape the data
+            latdim = self.latdim if self.latdim is not None else self.latname
+            londim = self.londim if self.londim is not None else self.lonname
+            self.data = (
+                ds[self.varname]
+                .isel(self.var_dim_selection)
+                .stack({"loc": (latdim, londim)})
+            )
+            self.locdim = "loc"
+        else:
+            self.data = ds[self.varname]
         self.grid = self._grid_from_xarray(ds)
         (
             self.dataset_metadata,
@@ -717,26 +743,17 @@ class XarrayTSReader(XarrayMetadataMixin):
 
         if len(args) == 1:
             gpi = args[0]
-            if self._has_regular_grid:
-                lon, lat = self.grid.gpi2lonlat(gpi)
-
         elif len(args) == 2:
             lon = args[0]
             lat = args[1]
-            if not self._has_regular_grid:
-                gpi = self.grid.find_nearest_gpi(lon, lat)[0]
-                if not isinstance(gpi, np.integer):
-                    raise ValueError(
-                        f"No gpi near (lon={lon}, lat={lat}) found"
-                    )
-        else:
+            gpi = self.grid.find_nearest_gpi(lon, lat)[0]
+            if not isinstance(gpi, np.integer):  # pragma: no cover
+                raise ValueError(f"No gpi near (lon={lon}, lat={lat}) found")
+        else:  # pragma: no cover
             raise ValueError(
                 f"args must have length 1 or 2, but has length {len(args)}"
             )
 
-        if self._has_regular_grid:
-            return self.data[
-                {self.latname: lat, self.lonname: lon}
-            ].to_pandas()
-        else:
-            return self.data[{self.locdim: gpi}].to_pandas()
+        ts = self.data[{self.locdim: gpi}].to_pandas()
+        ts.name = self.varname
+        return ts
