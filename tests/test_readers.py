@@ -17,24 +17,30 @@ from pytest import test_data_path
 def validate_reader(reader):
 
     expected_timestamps = pd.date_range(
-        "2017-03-31 00:00", periods=8, freq="6H"
+        "2017-03-30 00:00", periods=6, freq="D"
     ).to_pydatetime()
-    assert len(reader.timestamps) == 8
+    assert len(reader.timestamps) == 6
     assert np.all(list(reader.timestamps) == expected_timestamps)
 
     img = reader.read(expected_timestamps[0])
     true = xr.open_dataset(
-        test_data_path / "lis_noah" / "201703" / "LIS_HIST_201703310000.d01.nc"
-    )["SoilMoist_tavg"].isel(SoilMoist_profiles=0)
-    np.testing.assert_allclose(img.data["SoilMoist_tavg"], true.values.ravel())
-    true.attrs == img.metadata["SoilMoist_tavg"]
+        test_data_path
+        / "lis_noahmp"
+        / "201703"
+        / "LIS_HIST_201703300000.d01.nc"
+    )["SoilMoist_inst"].isel(SoilMoist_profiles=0)
+    np.testing.assert_allclose(img.data["SoilMoist_inst"], true.values.ravel())
+    true.attrs == img.metadata["SoilMoist_inst"]
 
     img = reader.read(expected_timestamps[-1])
     true = xr.open_dataset(
-        test_data_path / "lis_noah" / "201704" / "LIS_HIST_201704011800.d01.nc"
-    )["SoilMoist_tavg"].isel(SoilMoist_profiles=0)
-    np.testing.assert_allclose(img.data["SoilMoist_tavg"], true.values.ravel())
-    true.attrs == img.metadata["SoilMoist_tavg"]
+        test_data_path
+        / "lis_noahmp"
+        / "201704"
+        / "LIS_HIST_201704040000.d01.nc"
+    )["SoilMoist_inst"].isel(SoilMoist_profiles=0)
+    np.testing.assert_allclose(img.data["SoilMoist_inst"], true.values.ravel())
+    true.attrs == img.metadata["SoilMoist_inst"]
 
 
 ###############################################################################
@@ -42,9 +48,9 @@ def validate_reader(reader):
 ###############################################################################
 
 # Optional features to test for DirectoryImageReader:
-# - [X] var_dim_selection
-#   - [X] with var_dim_selection: default_directory_reader
-#   - [-] without var_dim_selection: covered in XarrayImageReader tests
+# - [X] level
+#   - [X] with level: default_directory_reader
+#   - [-] without level: covered in XarrayImageReader tests
 # - [X] fmt: default_directory_reader
 # - [X] pattern: default_directory_reader
 # - [X] time_regex_pattern: test_time_regex
@@ -66,13 +72,15 @@ def test_directory_reader_setup():
     # lat/lon
     start = time.time()
     reader = DirectoryImageReader(
-        test_data_path / "lis_noah",
-        "SoilMoist_tavg",
+        test_data_path / "lis_noahmp",
+        "SoilMoist_inst",
         fmt=fmt,
         pattern=pattern,
         latdim="north_south",
         londim="east_west",
-        var_dim_selection={"SoilMoist_profiles": 0},
+        level={"SoilMoist_profiles": 0},
+        lat=(29.875, 0.25),
+        lon=(-11.375, 0.25),
     )
     runtime = time.time() - start
     print(f"Setup time with fmt string: {runtime:.2e}")
@@ -81,12 +89,14 @@ def test_directory_reader_setup():
     # test without fmt, requires opening all files
     start = time.time()
     reader = DirectoryImageReader(
-        test_data_path / "lis_noah",
-        "SoilMoist_tavg",
+        test_data_path / "lis_noahmp",
+        "SoilMoist_inst",
         pattern=pattern,
         latdim="north_south",
         londim="east_west",
-        var_dim_selection={"SoilMoist_profiles": 0},
+        level={"SoilMoist_profiles": 0},
+        lat=(29.875, 0.25),
+        lon=(-11.375, 0.25),
     )
     runtime2 = time.time() - start
     print(f"Setup time without fmt string: {runtime2:.2e}")
@@ -101,24 +111,26 @@ def test_time_regex():
     fmt = "%Y%m%d%H%M"
     time_regex_pattern = r"LIS_HIST_(\d+)\..*\.nc"
     reader = DirectoryImageReader(
-        test_data_path / "lis_noah",
-        "SoilMoist_tavg",
+        test_data_path / "lis_noahmp",
+        "SoilMoist_inst",
         fmt=fmt,
         pattern=pattern,
         time_regex_pattern=time_regex_pattern,
         latdim="north_south",
         londim="east_west",
-        var_dim_selection={"SoilMoist_profiles": 0},
+        level={"SoilMoist_profiles": 0},
+        lat=(29.875, 0.25),
+        lon=(-11.375, 0.25),
     )
     validate_reader(reader)
 
 
 def test_read_block(default_directory_reader):
     block = default_directory_reader.read_block()
-    assert block.shape == (8, 22, 28)
+    assert block.shape == (6, 168, 207)
 
     reader = XarrayImageReader(
-        block.to_dataset(name="SoilMoist_tavg"), "SoilMoist_tavg"
+        block.to_dataset(name="SoilMoist_inst"), "SoilMoist_inst"
     )
     validate_reader(reader)
 
@@ -126,7 +138,7 @@ def test_read_block(default_directory_reader):
     block = default_directory_reader.read_block(
         start=start_date, end=start_date
     )
-    assert block.shape == (1, 22, 28)
+    assert block.shape == (1, 168, 207)
 
 
 ###############################################################################
@@ -134,9 +146,9 @@ def test_read_block(default_directory_reader):
 ###############################################################################
 
 # Optional features to test for DirectoryImageReader:
-# - [X] var_dim_selection
-#   - [-] with var_dim_selection: covered in DirectoryImageReader tests
-#   - [X] without var_dim_selection: test_xarray_reader_basic
+# - [X] level
+#   - [-] with level: covered in DirectoryImageReader tests
+#   - [X] without level: test_xarray_reader_basic
 # - [X] timename, latname, lonname: test_nonstandard_names
 # - [X] latdim, londim: covered in DirectoryImageReader tests
 # - [X] locdim: test_locdim
@@ -157,7 +169,9 @@ def test_nonstandard_names(test_dataset):
 
 
 def test_locdim(test_loc_dataset):
-    reader = XarrayImageReader(test_loc_dataset, "X", locdim="location")
+    reader = XarrayImageReader(
+        test_loc_dataset, "X", locdim="location", latname="lat", lonname="lon"
+    )
     block = reader.read_block()
     assert block.shape == (100, 200)
 

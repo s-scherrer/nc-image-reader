@@ -36,19 +36,10 @@ from repurpose.img2ts import Img2Ts
 
 from nc_image_reader.readers import XarrayImageReader, DirectoryImageReader
 from nc_image_reader.transpose import create_transposed_netcdf
-
-
-def mkdate(datestring):
-    if len(datestring) == 10:
-        return datetime.datetime.strptime(datestring, "%Y-%m-%d")
-    elif len(datestring) == 16:
-        return datetime.datetime.strptime(datestring, "%Y-%m-%dT%H:%M")
-    else:  # pragma: no cover
-        raise ValueError(f"Invalid date: {datestring}")
+from nc_image_reader.utils import mkdate
 
 
 class ReaderArgumentParser(argparse.ArgumentParser):
-
     def __init__(self, description):
         super().__init__(description=description)
 
@@ -140,6 +131,30 @@ class ReaderArgumentParser(argparse.ArgumentParser):
             help="Name of the location dimension for non-regular grids.",
         )
         self.add_argument(
+            "--lat",
+            type=float,
+            metavar=("START", "STEP"),
+            nargs=2,
+            default=None,
+            help=(
+                "Start and stepsize for latitude vector, in case it can"
+                " not be inferred from the netCDF. Requires that --latdim"
+                " is also given."
+            ),
+        )
+        self.add_argument(
+            "--lon",
+            type=float,
+            metavar=("START", "STEP"),
+            nargs=2,
+            default=None,
+            help=(
+                "Start and stepsize for longitude vector, in case it can"
+                " not be inferred from the netCDF. Requires that --londim"
+                " is also given."
+            ),
+        )
+        self.add_argument(
             "--bbox",
             type=float,
             default=None,
@@ -156,19 +171,19 @@ class ReaderArgumentParser(argparse.ArgumentParser):
             metavar="[FILENAME:]VARNAME",
             help=(
                 "Either only the variable name of a variable in the dataset"
-                " that is False over non-land points, or \"<filename>:<varname>\""
+                ' that is False over non-land points, or "<filename>:<varname>"'
                 " if the landmask is in a different file. The landmask must have"
                 " the same coordinates as the dataset."
             ),
         )
         self.add_argument(
-            "--var_dim_selection",
+            "--level",
             type=str,
             metavar="DIMNAME:IDX",
             nargs="+",
             help=(
                 "Dimension names and indices for additional dimensions, e.g."
-                " levels, separated by colons"
+                " levels, dimension names and indices are given separated by colons"
             ),
         )
         self.add_argument(
@@ -182,7 +197,7 @@ class ReaderArgumentParser(argparse.ArgumentParser):
 class RepurposeArgumentParser(ReaderArgumentParser):
     def __init__(self):
         super().__init__("Converts data to time series format.")
-        self.prog = "repurpose_netcdf"
+        self.prog = "repurpose_images"
         self.add_argument(
             "--imgbuffer",
             type=int,
@@ -198,7 +213,7 @@ class RepurposeArgumentParser(ReaderArgumentParser):
 class TransposeArgumentParser(ReaderArgumentParser):
     def __init__(self):
         super().__init__("Converts data to transposed netCDF.")
-        self.prog = "transpose_netcdf"
+        self.prog = "transpose_images"
         self.add_argument(
             "--memory",
             type=float,
@@ -233,12 +248,12 @@ def parse_args(parser, args):
         f" into directory {args.output_root}."
     )
 
-    var_dim_selection = args.var_dim_selection
-    if var_dim_selection is not None:
-        var_dim_selection = {}
-        for argument in args.var_dim_selection:
+    level = args.level
+    if level is not None:
+        level = {}
+        for argument in args.level:
             dimname, val = argument.split(":")
-            var_dim_selection[dimname] = int(val)
+            level[dimname] = int(val)
 
     common_reader_kwargs = dict(
         latname=args.latname,
@@ -246,10 +261,12 @@ def parse_args(parser, args):
         latdim=args.latdim,
         londim=args.londim,
         locdim=args.locdim,
+        lat=args.lat,
+        lon=args.lon,
         bbox=args.bbox,
         cellsize=args.cellsize,
         landmask=args.landmask,
-        var_dim_selection=var_dim_selection
+        level=level,
     )
 
     input_path = Path(args.dataset_root)
@@ -275,6 +292,10 @@ def parse_args(parser, args):
 def repurpose(args):
     parser = RepurposeArgumentParser()
     reader, args = parse_args(parser, args)
+
+    outpath = Path(args.output_root)
+    outpath.mkdir(exist_ok=True, parents=True)
+
     reshuffler = Img2Ts(
         input_dataset=reader,
         outputpath=args.output_root,

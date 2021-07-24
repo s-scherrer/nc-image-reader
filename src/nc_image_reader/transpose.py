@@ -6,13 +6,17 @@ import math
 import numpy as np
 from pathlib import Path
 from tqdm import tqdm
-from typing import Union, Tuple
+from typing import Union, Tuple, TypeVar
 
-from .readers import XarrayImageReaderBase, XarrayImageReader
+
+from .readers import XarrayImageReader
+
+
+Reader = TypeVar("Reader")
 
 
 def create_transposed_netcdf(
-    reader: XarrayImageReaderBase,
+    reader: Reader,
     outfname: Union[Path, str],
     new_last_dim: str = None,
     start: datetime.datetime = None,
@@ -115,7 +119,6 @@ def create_transposed_netcdf(
                 coord = first_img[dim].values
             newfile.create_variable(dim, (dim,), dtype, data=coord)
         newfile[new_last_dim].attrs["units"] = time_units
-        
 
         # create new variable
         newvar = newfile.create_variable(

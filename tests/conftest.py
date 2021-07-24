@@ -57,28 +57,31 @@ def default_directory_reader():
     pattern = "LIS_HIST*.nc"
     fmt = "LIS_HIST_%Y%m%d%H%M.d01.nc"
     reader = DirectoryImageReader(
-        pytest.test_data_path / "lis_noah",
-        "SoilMoist_tavg",
+        pytest.test_data_path / "lis_noahmp",
+        "SoilMoist_inst",
         fmt=fmt,
         pattern=pattern,
         latdim="north_south",
         londim="east_west",
-        var_dim_selection={"SoilMoist_profiles": 0},
+        level={"SoilMoist_profiles": 0},
+        lat=(29.875, 0.25),
+        lon=(-11.375, 0.25),
     )
     return reader
 
+
 @pytest.fixture
-def lis_noah_stacked(default_directory_reader):
-    stack_path = pytest.test_data_path / "lis_noah_stacked.nc"
+def lis_noahmp_stacked(default_directory_reader):
+    stack_path = pytest.test_data_path / "lis_noahmp_stacked.nc"
     if not stack_path.exists():
         block = default_directory_reader.read_block()
-        block.to_dataset(name="SoilMoist_tavg").to_netcdf(stack_path)
+        block.to_dataset(name="SoilMoist_inst").to_netcdf(stack_path)
     return xr.open_dataset(stack_path)
 
 
 @pytest.fixture
-def default_xarray_reader(lis_noah_stacked):
-    return XarrayImageReader(lis_noah_stacked, "SoilMoist_tavg")
+def default_xarray_reader(lis_noahmp_stacked):
+    return XarrayImageReader(lis_noahmp_stacked, "SoilMoist_inst")
 
 
 @pytest.fixture

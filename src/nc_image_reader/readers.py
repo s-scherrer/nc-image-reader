@@ -22,25 +22,75 @@ from pygeogrids.netcdf import load_grid
 from pynetcf.time_series import GriddedNcOrthoMultiTs as _GriddedNcOrthoMultiTs
 
 from .exceptions import ReaderError
+from .utils import mkdate
 
 
-class XarrayMetadataMixin:
+class XarrayReaderBase:
     """
-    Provides functions to get grid and metadata from an xarray
-    dataset.
+    Base class for readers that either read a full netcdf stack or single files
+    with xarray.
+
+    Note that the constructor needs a dataset from which to derive the grid,
+    the metadata, and the land mask, so you might have to get this first in the
+    child classes, before you can call the parent constructor.
     """
 
-    def _get_lat(self, ds: xr.Dataset) -> xr.DataArray:
-        lat = ds[self.latname]
-        if self.latdim is not None:
-            lat = lat.isel({self.londim: 0})
-        return lat
+    def __init__(
+        self,
+        ds: Union[xr.Dataset, str],
+        varname: str,
+        level: dict = None,
+        timename: str = "time",
+        latname: str = None,
+        lonname: str = None,
+        latdim: str = None,
+        londim: str = None,
+        locdim: str = None,
+        lat: tuple = None,
+        lon: tuple = None,
+        landmask: Union[xr.DataArray, str] = None,
+        bbox: Iterable = None,
+        cellsize: float = None,
+    ):
+        self.varname = varname
+        self.level = level
+        self.timename = timename
+        if latname is None:
+            self.latname = "lat"
+        else:
+            self.latname = latname
+        if lonname is None:
+            self.lonname = "lon"
+        else:
+            self.lonname = lonname
+        self.latdim = latdim
+        self.londim = londim
+        self.locdim = locdim
+        if locdim is not None and (latname is None or lonname is None):  # pragma: no cover
+            raise ReaderError(
+                "If locdim is given, latname and lonname must also be given."
+            )
+        self._lat = lat
+        self._lon = lon
+        self._has_regular_grid = locdim is None
+        self.bbox = bbox
+        self.cellsize = cellsize
+        # Landmask can be "<filename>:<variable_name>", "<variable_name>", or a
+        # xr.DataArray. The latter two cases are handled elsewhere
+        if isinstance(landmask, str):
+            if ":" in landmask:
+                fname, vname = landmask.split(":")
+                self.landmask = xr.open_dataset(fname)[vname]
+            else:
+                self.landmask = ds[landmask]
+        else:
+            self.landmask = landmask
 
-    def _get_lon(self, ds: xr.Dataset) -> xr.DataArray:
-        lon = ds[self.lonname]
-        if self.londim is not None:
-            lon = lon.isel({self.latdim: 0})
-        return lon
+        self.grid = self._grid_from_xarray(ds)
+        (
+            self.dataset_metadata,
+            self.array_metadata,
+        ) = self._metadata_from_xarray(ds)
 
     def _metadata_from_xarray(self, ds: xr.Dataset) -> Tuple[dict, dict]:
         dataset_metadata = dict(ds.attrs)
@@ -50,8 +100,8 @@ class XarrayMetadataMixin:
     def _grid_from_xarray(self, ds: xr.Dataset) -> CellGrid:
 
         # if using regular lat-lon grid, we can use gridfromdims
-        self.lat = self._get_lat(ds)
-        self.lon = self._get_lon(ds)
+        self.lat = self._get_coord(ds, "lat")
+        self.lon = self._get_coord(ds, "lon")
         if self._has_regular_grid:
             grid = gridfromdims(self.lon, self.lat)
             locdim = "loc"
@@ -91,13 +141,42 @@ class XarrayMetadataMixin:
 
         return grid
 
+    def _get_coord(self, ds: xr.Dataset, coordname: str) -> xr.DataArray:
+        # coordname must be either "lat" or "lon", independent of what's in the
+        # dataset, this only chooses attributes from this class based on the
+        # choice
+        cname = getattr(self, coordname + "name")
+        dimname = getattr(self, coordname + "dim")
+        _coord = getattr(self, "_" + coordname)
+        if dimname is None:
+            # coordinate is a dimension in dataset, so we can just return it
+            return ds[cname]
+        dimlen = len(ds[dimname])
+        if _coord is not None:
+            start, step = _coord
+            coord = np.array([start + i * step for i in range(dimlen)])
+        else:
+            # infer coordinate from variable in dataset
+            othername = "lon" if coordname == "lat" else "lat"
+            coord = ds[cname].isel({getattr(self, othername + "dim"): 0})
+            if np.any(np.isnan(coord)):  # pragma: no cover
+                raise ReaderError(
+                    f"Inferred coordinate values for {coordname}"
+                    " contain NaN! Try using the 'lat' and 'lon'"
+                    " keyword arguments to specify the coordinates"
+                    " directly."
+                )
+        return xr.DataArray(
+            coord,
+            coords={self.latname: coord},
+            dims=[self.latname],
+            name=self.latname,
+        )
 
-class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
+
+class XarrayImageReaderMixin:
     """
-    Base class for image readers that either read a full netcdf stack or single
-    files with xarray.
-
-    This provides the methods:
+    Provides the methods
     - self.read
     - self.tstamps_for_daterange
     - self._grid_from_xarray
@@ -106,54 +185,7 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
     and therefore meets all prerequisites for Img2Ts.
 
     Child classes must override `_read_image` and need to set self.timestamps.
-
-    Note that the constructor needs a dataset from which to derive the grid,
-    the metadata, and the land mask, so you might have to get this first in the
-    child classes, before you can call the parent constructor.
     """
-
-    def __init__(
-        self,
-        ds: xr.Dataset,
-        varname: str,
-        var_dim_selection: dict = None,
-        timename: str = "time",
-        latname: str = "lat",
-        lonname: str = "lon",
-        latdim: str = None,
-        londim: str = None,
-        locdim: str = None,
-        landmask: Union[xr.DataArray, str] = None,
-        bbox: Iterable = None,
-        cellsize: float = None,
-    ):
-        self.varname = varname
-        self.var_dim_selection = var_dim_selection
-        self.timename = timename
-        self.latname = latname
-        self.lonname = lonname
-        self.latdim = latdim
-        self.londim = londim
-        self.locdim = locdim
-        self._has_regular_grid = locdim is None
-        self.bbox = bbox
-        self.cellsize = cellsize
-        # Landmask can be "<filename>:<variable_name>", "<variable_name>", or a
-        # xr.DataArray. The latter two cases are handled elsewhere
-        if isinstance(landmask, str):
-            if ":" in landmask:
-                fname, vname = landmask.split(":")
-                self.landmask = xr.open_dataset(fname)[vname]
-            else:
-                self.landmask = ds[landmask]
-        else:
-            self.landmask = landmask
-
-        self.grid = self._grid_from_xarray(ds)
-        (
-            self.dataset_metadata,
-            self.array_metadata,
-        ) = self._metadata_from_xarray(ds)
 
     @abstractmethod
     def _read_image(
@@ -164,14 +196,16 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
         """
         ...
 
-    def read(self, timestamp: datetime.datetime, **kwargs) -> Image:
+    def read(
+        self, timestamp: Union[datetime.datetime, str], **kwargs
+    ) -> Image:
         """
         Read a single image at a given timestamp. Raises `KeyError` if
         timestamp is not available in the dataset.
 
         Parameters
         ----------
-        timestamp : datetime.datetime
+        timestamp : datetime.datetime or str
             Timestamp of image of interest
 
         Returns
@@ -184,11 +218,11 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
         ------
         KeyError
         """
+        if isinstance(timestamp, str):
+            timestamp = mkdate(timestamp)
 
         if timestamp in self.timestamps:
-            img = self._read_image(timestamp)[self.varname].isel(
-                self.var_dim_selection
-            )
+            img = self._read_image(timestamp)[self.varname].isel(self.level)
             # check if dimensions are as expected and potentially select from
             # non lat/lon/time dimensions
             latdim = self.latdim if self.latdim is not None else self.latname
@@ -212,7 +246,9 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
             )
 
     def tstamps_for_daterange(
-        self, start: datetime.datetime, end: datetime.datetime
+        self,
+        start: Union[datetime.datetime, str],
+        end: Union[datetime.datetime, str],
     ) -> List[datetime.datetime]:
         """
         Timestamps available within the given date range.
@@ -232,17 +268,19 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
         """
         if start is None:
             start = self.timestamps[0]
+        elif isinstance(start, str):
+            start = mkdate(start)
         if end is None:
             end = self.timestamps[-1]
+        elif isinstance(end, str):
+            end = mkdate(end)
         return list(filter(lambda t: t >= start and t <= end, self.timestamps))
 
     def _read_block(self, timestamps: Iterable) -> xr.DataArray:
         imgs = []
         for tstamp in timestamps:
             imgs.append(
-                self._read_image(tstamp)[self.varname].isel(
-                    self.var_dim_selection
-                )
+                self._read_image(tstamp)[self.varname].isel(self.level)
             )
         block = xr.concat(imgs, dim=self.timename).assign_coords(
             {self.timename: timestamps}
@@ -251,17 +289,17 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
 
     def read_block(
         self,
-        start: datetime.datetime = None,
-        end: datetime.datetime = None,
+        start: Union[datetime.datetime, str] = None,
+        end: Union[datetime.datetime, str] = None,
     ) -> xr.DataArray:
         """
         Reads a block of the image stack.
 
         Parameters
         ----------
-        start : datetime.datetime, optional
+        start : datetime.datetime or str, optional
             If not given, start at first timestamp in dataset.
-        end : datetime.datetime, optional
+        end : datetime.datetime or str, optional
             If not given, end at last timestamp in dataset.
 
         Returns
@@ -303,7 +341,7 @@ class XarrayImageReaderBase(XarrayMetadataMixin, ABC):
         return block
 
 
-class DirectoryImageReader(XarrayImageReaderBase):
+class DirectoryImageReader(XarrayReaderBase, XarrayImageReaderMixin):
     r"""
     Image reader for a directory containing netcdf files.
 
@@ -317,7 +355,7 @@ class DirectoryImageReader(XarrayImageReaderBase):
         `pattern` within this directory or any subdirectories is used.
     varname : str
         Name of the variable that should be read.
-    var_dim_selection : dict, optional
+    level : dict, optional
         If the variable has more dimensions than latitude, longitude, time (or
         location, time), e.g. a level dimension, a single value for each
         remaining dimension must be chosen. They can be passed here as
@@ -364,7 +402,16 @@ class DirectoryImageReader(XarrayImageReaderBase):
         The name of the longitude dimension in case it's not the same as the
         longitude coordinate variable.
     locdim : str, optional
-        The name of the location dimension for non-rectangular grids.
+        The name of the location dimension for non-rectangular grids. If this
+        is given, you *MUST* provide `lonname` and `latname`.
+    lat : tuple, optional
+        If the latitude can not be inferred from the dataset you can specify it
+        by giving a start and stepsize. This is only used if `latdim` is
+        given.
+    lon : tupl, optional
+        If the longitude can not be inferred from the dataset you can specify it
+        by giving a start and stepsize. This is only used if `londim` is
+        given.
     timename : str, optional
         The name of the time coordinate, default is "time".
     landmask : xr.DataArray or str, optional
@@ -386,16 +433,18 @@ class DirectoryImageReader(XarrayImageReaderBase):
         self,
         directory: Union[Path, str],
         varname: str,
-        var_dim_selection: dict = None,
+        level: dict = None,
         fmt: str = None,
         pattern: str = "*.nc",
         time_regex_pattern: str = None,
         timename: str = "time",
-        latname: str = "lat",
-        lonname: str = "lon",
+        latname: str = None,
+        lonname: str = None,
         latdim: str = None,
         londim: str = None,
         locdim: str = None,
+        lat: tuple = None,
+        lon: tuple = None,
         landmask: xr.DataArray = None,
         bbox: Iterable = None,
         cellsize: float = None,
@@ -423,13 +472,15 @@ class DirectoryImageReader(XarrayImageReaderBase):
         super().__init__(
             ds,
             varname,
-            var_dim_selection=var_dim_selection,
+            level=level,
             timename=timename,
             latname=latname,
             lonname=lonname,
             latdim=latdim,
             londim=londim,
             locdim=locdim,
+            lat=lat,
+            lon=lon,
             landmask=landmask,
             bbox=bbox,
             cellsize=cellsize,
@@ -479,7 +530,7 @@ class DirectoryImageReader(XarrayImageReaderBase):
         return ds
 
 
-class XarrayImageReader(XarrayImageReaderBase):
+class XarrayImageReader(XarrayReaderBase, XarrayImageReaderMixin):
     """
     Image reader that wraps a xarray.Dataset.
 
@@ -497,7 +548,7 @@ class XarrayImageReader(XarrayImageReaderBase):
         coordinates/dimensions.
     varname : str
         Name of the variable that should be read.
-    var_dim_selection : dict, optional
+    level : dict, optional
         If the variable has more dimensions than latitude, longitude, time (or
         location, time), e.g. a level dimension, a single value for each
         remaining dimension must be chosen. They can be passed here as
@@ -520,7 +571,16 @@ class XarrayImageReader(XarrayImageReaderBase):
         The name of the longitude dimension in case it's not the same as the
         longitude coordinate variable.
     locdim : str, optional
-        The name of the location dimension for non-rectangular grids.
+        The name of the location dimension for non-rectangular grids. If this
+        is given, you *MUST* provide `lonname` and `latname`.
+    lat : tuple, optional
+        If the latitude can not be inferred from the dataset you can specify it
+        by giving a start and stepsize. This is only used if `latdim` is
+        given.
+    lon : tupl, optional
+        If the longitude can not be inferred from the dataset you can specify it
+        by giving a start and stepsize. This is only used if `londim` is
+        given.
     landmask : xr.DataArray or str, optional
         A land mask to be applied to reduce storage size. This can either be a
         xr.DataArray of the same shape as the dataset images with ``False`` at
@@ -540,13 +600,15 @@ class XarrayImageReader(XarrayImageReaderBase):
         self,
         ds: xr.Dataset,
         varname: str,
-        var_dim_selection: dict = None,
+        level: dict = None,
         timename: str = "time",
-        latname: str = "lat",
-        lonname: str = "lon",
+        latname: str = None,
+        lonname: str = None,
         latdim: str = None,
         londim: str = None,
         locdim: str = None,
+        lat: tuple = None,
+        lon: tuple = None,
         landmask: xr.DataArray = None,
         bbox: Iterable = None,
         cellsize: float = None,
@@ -557,13 +619,15 @@ class XarrayImageReader(XarrayImageReaderBase):
         super().__init__(
             ds,
             varname,
-            var_dim_selection=var_dim_selection,
+            level=level,
             timename=timename,
             latname=latname,
             lonname=lonname,
             latdim=latdim,
             londim=londim,
             locdim=locdim,
+            lat=lat,
+            lon=lon,
             landmask=landmask,
             bbox=bbox,
             cellsize=cellsize,
@@ -576,7 +640,7 @@ class XarrayImageReader(XarrayImageReaderBase):
 
     def _read_block(self, timestamps: Iterable) -> xr.DataArray:
         return self.data.sel({self.timename: timestamps})[self.varname].isel(
-            self.var_dim_selection
+            self.level
         )
 
 
@@ -622,7 +686,7 @@ class GriddedNcOrthoMultiTs(_GriddedNcOrthoMultiTs):
         super().__init__(ts_path, grid, **kwargs)
 
 
-class XarrayTSReader(XarrayMetadataMixin):
+class XarrayTSReader(XarrayReaderBase):
     """
     Wrapper for xarray.Dataset when timeseries of the data should be read.
 
@@ -647,7 +711,7 @@ class XarrayTSReader(XarrayMetadataMixin):
         coordinates/dimensions.
     varname : str
         Name of the variable that should be read.
-    var_dim_selection : dict, optional
+    level : dict, optional
         If the variable has more dimensions than latitude, longitude, time (or
         location, time), e.g. a level dimension, a single value for each
         remaining dimension must be chosen. They can be passed here as
@@ -670,7 +734,16 @@ class XarrayTSReader(XarrayMetadataMixin):
         The name of the longitude dimension in case it's not the same as the
         longitude coordinate variable.
     locdim : str, optional
-        The name of the location dimension for non-rectangular grids.
+        The name of the location dimension for non-rectangular grids. If this
+        is given, you *MUST* provide `lonname` and `latname`.
+    lat : tuple, optional
+        If the latitude can not be inferred from the dataset you can specify it
+        by giving a start and stepsize. This is only used if `latdim` is
+        given.
+    lon : tupl, optional
+        If the longitude can not be inferred from the dataset you can specify it
+        by giving a start and stepsize. This is only used if `londim` is
+        given.
     landmask : xr.DataArray, optional
         A land mask to be applied to reduce storage size.
     bbox : Iterable, optional
@@ -683,29 +756,38 @@ class XarrayTSReader(XarrayMetadataMixin):
         self,
         ds: xr.Dataset,
         varname: str,
-        var_dim_selection: dict = None,
+        level: dict = None,
         timename: str = "time",
         latname: str = "lat",
         lonname: str = "lon",
         latdim: str = None,
         londim: str = None,
         locdim: str = None,
+        lat: tuple = None,
+        lon: tuple = None,
         landmask: xr.DataArray = None,
         bbox: Iterable = None,
         cellsize: float = None,
     ):
-        self.varname = varname
-        self.var_dim_selection = var_dim_selection
-        self.timename = timename
-        self.latname = latname
-        self.lonname = lonname
-        self.latdim = latdim
-        self.londim = londim
-        self.locdim = locdim
-        self._has_regular_grid = locdim is None
-        self.landmask = landmask
-        self.bbox = bbox
-        self.cellsize = cellsize
+        if isinstance(ds, str):
+            ds = xr.open_dataset(ds)
+
+        super().__init__(
+            ds,
+            varname,
+            level=level,
+            timename=timename,
+            latname=latname,
+            lonname=lonname,
+            latdim=latdim,
+            londim=londim,
+            locdim=locdim,
+            lat=lat,
+            lon=lon,
+            landmask=landmask,
+            bbox=bbox,
+            cellsize=cellsize,
+        )
 
         if self._has_regular_grid:
             # we have to reshape the data
@@ -713,17 +795,12 @@ class XarrayTSReader(XarrayMetadataMixin):
             londim = self.londim if self.londim is not None else self.lonname
             self.data = (
                 ds[self.varname]
-                .isel(self.var_dim_selection)
+                .isel(self.level)
                 .stack({"loc": (latdim, londim)})
             )
             self.locdim = "loc"
         else:
             self.data = ds[self.varname]
-        self.grid = self._grid_from_xarray(ds)
-        (
-            self.dataset_metadata,
-            self.array_metadata,
-        ) = self._metadata_from_xarray(ds)
 
     def read(self, *args, **kwargs) -> pd.Series:
         """

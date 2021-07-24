@@ -14,42 +14,47 @@ from pytest import test_data_path
 
 @pytest.fixture
 def cli_args_lis(test_output_path):
-    input_path = test_data_path / "lis_noah"
+    input_path = test_data_path / "lis_noahmp"
     output_path = test_output_path
     return [
         str(input_path),
         str(output_path),
-        "2017-03-31",
-        "2017-04-02",
-        *("--parameter", "SoilMoist_tavg"),
+        "2017-03-30",
+        "2017-04-04",
+        *("--parameter", "SoilMoist_inst"),
         *("--pattern", "LIS_HIST*.nc"),
         *("--time_regex_pattern", r"LIS_HIST_(\d+)\..*\.nc"),
         *("--time_fmt", "%Y%m%d%H%M"),
         *("--latdim", "north_south"),
         *("--londim", "east_west"),
-        *("--var_dim_selection", "SoilMoist_profiles:0"),
+        *("--level", "SoilMoist_profiles:0"),
+        *("--lat", "29.875", "0.25"),
+        *("--lon", "-11.375", "0.25"),
     ]
 
 
-def test_transpose_lis(cli_args_lis, lis_noah_stacked):
-    args = cli_args_lis + ["--chunks", "22", "14", "-1"]
-    args[1] = args[1] + "/lis_noah_transposed.nc"
+def test_transpose_lis(cli_args_lis, lis_noahmp_stacked):
+    args = cli_args_lis + ["--chunks", "21", "69", "-1"]
+    args[1] = args[1] + "/lis_noahmp_transposed.nc"
     outpath = Path(args[1])
     transpose(args)
     ref = xr.open_dataset(
-        test_data_path / "lis_noah" / "201703" / "LIS_HIST_201703310000.d01.nc"
+        test_data_path
+        / "lis_noahmp"
+        / "201703"
+        / "LIS_HIST_201703300000.d01.nc"
     )
     with h5netcdf.File(outpath, "r", decode_vlen_strings=False) as ds:
-        assert ds["SoilMoist_tavg"].dimensions == ("lat", "lon", "time")
-        assert ds["SoilMoist_tavg"].shape == (22, 28, 8)
-        assert ds["SoilMoist_tavg"].chunks == (22, 14, 8)
+        assert ds["SoilMoist_inst"].dimensions == ("lat", "lon", "time")
+        assert ds["SoilMoist_inst"].shape == (168, 207, 6)
+        assert ds["SoilMoist_inst"].chunks == (21, 69, 6)
         np.testing.assert_allclose(
-            ds["SoilMoist_tavg"][..., 0],
-            ref["SoilMoist_tavg"].isel(SoilMoist_profiles=0).values,
+            ds["SoilMoist_inst"][..., 0],
+            ref["SoilMoist_inst"].isel(SoilMoist_profiles=0).values,
         )
         np.testing.assert_allclose(
-            ds["SoilMoist_tavg"][...],
-            lis_noah_stacked["SoilMoist_tavg"].transpose(..., "time").values,
+            ds["SoilMoist_inst"][...],
+            lis_noahmp_stacked["SoilMoist_inst"].transpose(..., "time").values,
         )
 
     # make sure that the time coordinate has nice units
@@ -57,11 +62,12 @@ def test_transpose_lis(cli_args_lis, lis_noah_stacked):
     assert ds.time.dtype == np.dtype("datetime64[ns]")
 
 
-def test_repurpose_lis(cli_args_lis, lis_noah_stacked):
+@pytest.mark.slow
+def test_repurpose_lis(cli_args_lis, lis_noahmp_stacked):
     outpath = Path(cli_args_lis[1])
     repurpose(cli_args_lis)
     reader = GriddedNcOrthoMultiTs(outpath)
-    ref = XarrayTSReader(lis_noah_stacked, "SoilMoist_tavg")
+    ref = XarrayTSReader(lis_noahmp_stacked, "SoilMoist_inst")
     assert np.all(
         np.sort(reader.grid.activegpis) == np.sort(ref.grid.activegpis)
     )
@@ -86,7 +92,7 @@ def cli_args_cmip(test_output_path):
         "1970-01-10T00:00",
         *("--parameter", "mrsos"),
         *("--bbox", "10", "34", "43", "71"),
-        *("--landmask", f"{str(landmask_path)}:landmask")
+        *("--landmask", f"{str(landmask_path)}:landmask"),
     ]
 
 
@@ -112,6 +118,7 @@ def test_transpose_cmip(cli_args_cmip, cmip_ds):
     assert ds.time.dtype == np.dtype("datetime64[ns]")
 
 
+@pytest.mark.slow
 def test_repurpose_cmip(cli_args_cmip, cmip_ds):
     outpath = Path(cli_args_cmip[1])
     repurpose(cli_args_cmip)
