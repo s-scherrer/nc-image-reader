@@ -52,4 +52,5 @@ MANIFEST
 
 # test data
 large_file_testing/*.nc
+large_file_testing/large_testdata_time_first_images/
 lis_noah_stacked.nc

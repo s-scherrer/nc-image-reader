@@ -123,5 +123,7 @@ def test_repurpose_cmip(cli_args_cmip, cmip_ds):
     # XarrayTSReader the grid was already only points the bbox.
     _, lons, lats, _ = reader.grid.get_grid_points()
     for lon, lat in zip(lons, lats):
-        ts = reader.read(lon, lat)
-        ref_ts = ref.read(lon, lat)
+        ts = reader.read(lon, lat)["mrsos"]
+        assert len(ts) == 9
+        ref_ts = ref.read(lon, lat)[0:9]
+        assert np.all(ts == ref_ts)

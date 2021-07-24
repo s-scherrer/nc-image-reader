@@ -1,6 +1,7 @@
 import dask.array as da
 import numpy as np
 import pandas as pd
+from pathlib import Path
 import xarray as xr
 
 
@@ -21,4 +22,11 @@ if __name__ == "__main__":
         coords={"time": time, "lat": lat, "lon": lon},
     )
     ds = ds.chunk({"time": 1, "lat": nlat, "lon": nlon})
-    ds.to_netcdf("large_testdata_time_first.nc")
+
+    outpath = Path("large_testdata_time_first_images")
+    outpath.mkdir(exist_ok=True)
+    time = ds.time.to_pandas().index.to_pydatetime()
+    for tstamp in time:
+        fname = tstamp.strftime("testdata_%Y%m%d%H%M.nc")
+        print("Writing image", fname)
+        ds.sel(time=tstamp).to_netcdf(outpath / fname)
