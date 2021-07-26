@@ -24,6 +24,8 @@ def create_transposed_netcdf(
     time_units: str = "days since 1900-01-01 00:00:00",
     memory: float = 2,
     chunks: Tuple = None,
+    zlib: bool = True,
+    complevel: int = 4,
 ):
     """
     Creates a stacked and transposed netCDF file from a given reader.
@@ -47,7 +49,19 @@ def create_transposed_netcdf(
         Chunks for the output file. Must already be in the transposed order,
         i.e. the last entry corresponds to the chunksize for `new_last_dim`. -1
         indicates a chunk covering the full dimension.
+    zlib : bool, optional
+        Whether to use compression when storing the files. Reduces file size,
+        but might increase access time. Default is ``True``
+    complevel : int, optional
+        Compression level to use. Default is 4. Range is from 1 (low) to 9
+        (high).
     """
+    compression_options = {}
+    if zlib is True:
+        # translate to HDF5 API
+        compression_options["compression"] = "gzip"
+        compression_options["compression_opts"] = complevel
+
     new_last_dim = reader.timename
     timestamps = reader.tstamps_for_daterange(start, end)
 
@@ -56,7 +70,6 @@ def create_transposed_netcdf(
     dtype = first_img.dtype
     input_dim_names = first_img.dims
     input_dim_sizes = first_img.shape
-    old_pos = input_dim_names.index(new_last_dim)
 
     if input_dim_names[-1] == new_last_dim:  # pragma: no cover
         print(f"{new_last_dim} is already the last dimension")
@@ -122,7 +135,11 @@ def create_transposed_netcdf(
 
         # create new variable
         newvar = newfile.create_variable(
-            reader.varname, new_dim_names, dtype, chunks=chunks
+            reader.varname,
+            new_dim_names,
+            dtype,
+            chunks=chunks,
+            **compression_options,
         )
 
         # copy metadata
