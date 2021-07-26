@@ -26,17 +26,14 @@ timeseries format or a transposed netcdf with time as last dimension
 """
 
 import argparse
-import datetime
 from pathlib import Path
-import numpy as np
-from typing import Union, Sequence
 import sys
 
 from repurpose.img2ts import Img2Ts
 
 from nc_image_reader.readers import XarrayImageReader, DirectoryImageReader
 from nc_image_reader.transpose import create_transposed_netcdf
-from nc_image_reader.utils import mkdate
+from nc_image_reader.utils import mkdate, str2bool
 
 
 class ReaderArgumentParser(argparse.ArgumentParser):
@@ -171,9 +168,10 @@ class ReaderArgumentParser(argparse.ArgumentParser):
             metavar="[FILENAME:]VARNAME",
             help=(
                 "Either only the variable name of a variable in the dataset"
-                ' that is False over non-land points, or "<filename>:<varname>"'
-                " if the landmask is in a different file. The landmask must have"
-                " the same coordinates as the dataset."
+                " that is False over non-land points, or"
+                "'<filename>:<varname>' if the landmask is in a different"
+                " file. The landmask must have the same coordinates as the"
+                " dataset."
             ),
         )
         self.add_argument(
@@ -183,7 +181,8 @@ class ReaderArgumentParser(argparse.ArgumentParser):
             nargs="+",
             help=(
                 "Dimension names and indices for additional dimensions, e.g."
-                " levels, dimension names and indices are given separated by colons"
+                " levels, dimension names and indices are given separated by"
+                " colons."
             ),
         )
         self.add_argument(
@@ -191,6 +190,12 @@ class ReaderArgumentParser(argparse.ArgumentParser):
             type=float,
             default=5.0,
             help=("Size of single file cells. Default is 5.0."),
+        )
+        self.add_argument(
+            "--zlib",
+            type=str2bool,
+            default=True,
+            help="Whether to use compression or not. Default is true",
         )
 
 
@@ -221,11 +226,16 @@ class TransposeArgumentParser(ReaderArgumentParser):
             help="The amount of memory to use as buffer in GB",
         )
         self.add_argument(
-            "--chunks",
-            type=float,
-            default=None,
-            nargs="+",
-            help="Chunksizes for the transposed netCDF.",
+            "--n_threads",
+            type=int,
+            default=4,
+            help="Number of threads to use.",
+        )
+        self.add_argument(
+            "--complevel",
+            type=int,
+            default=4,
+            help="Compression level. 1 means low, 9 means high, default is 4.",
         )
 
 
@@ -272,9 +282,7 @@ def parse_args(parser, args):
     input_path = Path(args.dataset_root)
     if input_path.is_file():
         reader = XarrayImageReader(
-            input_path,
-            args.parameter,
-            **common_reader_kwargs,
+            input_path, args.parameter, **common_reader_kwargs,
         )
     else:
         reader = DirectoryImageReader(
@@ -302,7 +310,7 @@ def repurpose(args):
         startdate=args.start,
         enddate=args.end,
         ts_attributes=reader.dataset_metadata,
-        zlib=True,
+        zlib=args.zlib,
         imgbuffer=args.imgbuffer,
         # this is necessary currently due to bug in repurpose
         cellsize_lat=args.cellsize,
@@ -314,16 +322,15 @@ def repurpose(args):
 def transpose(args):
     parser = TransposeArgumentParser()
     reader, args = parse_args(parser, args)
-    chunks = args.chunks
-    if chunks is not None:
-        chunks = tuple(chunks)
     create_transposed_netcdf(
         reader,
         args.output_root,
         start=args.start,
         end=args.end,
         memory=args.memory,
-        chunks=chunks,
+        n_threads=args.n_threads,
+        zlib=args.zlib,
+        complevel=args.complevel,
     )
 
 

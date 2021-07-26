@@ -3,10 +3,9 @@ Timeseries and image readers for wrapping xarray.Datasets, compatible with
 readers from the TUW-GEO python package universe (e.g. pygeobase, pynetcf).
 """
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 import datetime
 import fnmatch
-import glob
 import logging
 import numpy as np
 import os
@@ -22,7 +21,7 @@ from pygeogrids.netcdf import load_grid
 from pynetcf.time_series import GriddedNcOrthoMultiTs as _GriddedNcOrthoMultiTs
 
 from .exceptions import ReaderError
-from .utils import mkdate
+from .utils import mkdate, infer_chunks
 
 
 class XarrayReaderBase:
@@ -66,7 +65,9 @@ class XarrayReaderBase:
         self.latdim = latdim
         self.londim = londim
         self.locdim = locdim
-        if locdim is not None and (latname is None or lonname is None):  # pragma: no cover
+        if locdim is not None and (
+            latname is None or lonname is None
+        ):  # pragma: no cover
             raise ReaderError(
                 "If locdim is given, latname and lonname must also be given."
             )
@@ -104,7 +105,6 @@ class XarrayReaderBase:
         self.lon = self._get_coord(ds, "lon")
         if self._has_regular_grid:
             grid = gridfromdims(self.lon, self.lat)
-            locdim = "loc"
         else:
             grid = BasicGrid(self.lon, self.lat)
 
@@ -123,10 +123,7 @@ class XarrayReaderBase:
             # given is: bbox = [lonmin, latmin, lonmax, latmax]
             lonmin, latmin, lonmax, latmax = (*self.bbox,)
             bbox_gpis = grid.get_bbox_grid_points(
-                lonmin=lonmin,
-                latmin=latmin,
-                lonmax=lonmax,
-                latmax=latmax,
+                lonmin=lonmin, latmin=latmin, lonmax=lonmax, latmax=latmax,
             )
             grid = grid.subgrid_from_gpis(bbox_gpis)
         num_gpis = len(grid.activegpis)
@@ -285,6 +282,7 @@ class XarrayImageReaderMixin:
         block = xr.concat(imgs, dim=self.timename).assign_coords(
             {self.timename: timestamps}
         )
+        block.attrs.update(self.array_metadata)
         return block
 
     def read_block(
@@ -409,8 +407,8 @@ class DirectoryImageReader(XarrayReaderBase, XarrayImageReaderMixin):
         by giving a start and stepsize. This is only used if `latdim` is
         given.
     lon : tupl, optional
-        If the longitude can not be inferred from the dataset you can specify it
-        by giving a start and stepsize. This is only used if `londim` is
+        If the longitude can not be inferred from the dataset you can specify
+        it by giving a start and stepsize. This is only used if `londim` is
         given.
     timename : str, optional
         The name of the time coordinate, default is "time".
@@ -578,8 +576,8 @@ class XarrayImageReader(XarrayReaderBase, XarrayImageReaderMixin):
         by giving a start and stepsize. This is only used if `latdim` is
         given.
     lon : tupl, optional
-        If the longitude can not be inferred from the dataset you can specify it
-        by giving a start and stepsize. This is only used if `londim` is
+        If the longitude can not be inferred from the dataset you can specify
+        it by giving a start and stepsize. This is only used if `londim` is
         given.
     landmask : xr.DataArray or str, optional
         A land mask to be applied to reduce storage size. This can either be a
@@ -741,8 +739,8 @@ class XarrayTSReader(XarrayReaderBase):
         by giving a start and stepsize. This is only used if `latdim` is
         given.
     lon : tupl, optional
-        If the longitude can not be inferred from the dataset you can specify it
-        by giving a start and stepsize. This is only used if `londim` is
+        If the longitude can not be inferred from the dataset you can specify
+        it by giving a start and stepsize. This is only used if `londim` is
         given.
     landmask : xr.DataArray, optional
         A land mask to be applied to reduce storage size.
@@ -769,8 +767,10 @@ class XarrayTSReader(XarrayReaderBase):
         bbox: Iterable = None,
         cellsize: float = None,
     ):
-        if isinstance(ds, str):
+        if isinstance(ds, (str, Path)):
             ds = xr.open_dataset(ds)
+            chunks = infer_chunks(ds[varname].shape, 100, np.float32)
+            ds = ds.chunk(dict(zip(ds[varname].dims, chunks)))
 
         super().__init__(
             ds,
@@ -793,11 +793,8 @@ class XarrayTSReader(XarrayReaderBase):
             # we have to reshape the data
             latdim = self.latdim if self.latdim is not None else self.latname
             londim = self.londim if self.londim is not None else self.lonname
-            self.data = (
-                ds[self.varname]
-                .isel(self.level)
-                .stack({"loc": (latdim, londim)})
-            )
+            self.orig_data = ds[self.varname].isel(self.level)
+            self.data = self.orig_data.stack({"loc": (latdim, londim)})
             self.locdim = "loc"
         else:
             self.data = ds[self.varname]
@@ -820,17 +817,27 @@ class XarrayTSReader(XarrayReaderBase):
 
         if len(args) == 1:
             gpi = args[0]
+            if self._has_regular_grid:
+                lon, lat = self.grid.gpi2lonlat(gpi)
+
         elif len(args) == 2:
             lon = args[0]
             lat = args[1]
-            gpi = self.grid.find_nearest_gpi(lon, lat)[0]
-            if not isinstance(gpi, np.integer):  # pragma: no cover
-                raise ValueError(f"No gpi near (lon={lon}, lat={lat}) found")
+            if not self._has_regular_grid:
+                gpi = self.grid.find_nearest_gpi(lon, lat)[0]
+                if not isinstance(gpi, np.integer):  # pragma: no cover
+                    raise ValueError(
+                        f"No gpi near (lon={lon}, lat={lat}) found"
+                    )
         else:  # pragma: no cover
             raise ValueError(
                 f"args must have length 1 or 2, but has length {len(args)}"
             )
 
-        ts = self.data[{self.locdim: gpi}].to_pandas()
+        if self._has_regular_grid:
+            data = self.orig_data.sel(lat=lat, lon=lon)
+        else:
+            data = self.data[{self.locdim: gpi}]
+        ts = data.to_pandas()
         ts.name = self.varname
         return ts

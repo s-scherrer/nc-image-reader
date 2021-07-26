@@ -1,2 +1,6 @@
-2021/07/21: Run on sscherre home partition (SSD) took 55 minutes (using memory=2).
-2021/07/21: Run on sscherre home partition (SSD) took 49 minutes (using memory=10).
+2021/07/26: (tests on SSD)
+- Repurpose run took 40 minutes
+- Transpose (h5netcdf implementation) run without compression and memory=10 took 39 minutes,
+  compression with nccopy took another ~30 minutes (didn't have time to finish the run, extrapolated
+  time from file size development)
+- Transpose (xarray+dask implementation) run took 39 minutes

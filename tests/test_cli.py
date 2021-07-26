@@ -34,7 +34,7 @@ def cli_args_lis(test_output_path):
 
 
 def test_transpose_lis(cli_args_lis, lis_noahmp_stacked):
-    args = cli_args_lis + ["--chunks", "21", "69", "-1"]
+    args = cli_args_lis
     args[1] = args[1] + "/lis_noahmp_transposed.nc"
     outpath = Path(args[1])
     transpose(args)
@@ -47,7 +47,6 @@ def test_transpose_lis(cli_args_lis, lis_noahmp_stacked):
     with h5netcdf.File(outpath, "r", decode_vlen_strings=False) as ds:
         assert ds["SoilMoist_inst"].dimensions == ("lat", "lon", "time")
         assert ds["SoilMoist_inst"].shape == (168, 207, 6)
-        assert ds["SoilMoist_inst"].chunks == (21, 69, 6)
         np.testing.assert_allclose(
             ds["SoilMoist_inst"][..., 0],
             ref["SoilMoist_inst"].isel(SoilMoist_profiles=0).values,
@@ -106,8 +105,7 @@ def test_transpose_cmip(cli_args_cmip, cmip_ds):
         assert ds["mrsos"].dimensions == ("lat", "lon", "time")
         assert ds["mrsos"].shape == (53, 47, 9)
         np.testing.assert_allclose(
-            ds["mrsos"][..., 0],
-            ref["mrsos"].values[0, ...],
+            ds["mrsos"][..., 0], ref["mrsos"].values[0, ...],
         )
         np.testing.assert_allclose(
             ds["mrsos"][...],

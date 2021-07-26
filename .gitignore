@@ -53,5 +53,7 @@ MANIFEST
 # test data
 large_file_testing/*.nc
 large_file_testing/large_testdata_time_first_images/
+large_file_testing/large_testdata_time_last_timeseries/
 large_file_testing/SURFACEMODEL*
 lis_noahmp_stacked.nc
+dask-worker-space/
